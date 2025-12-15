@@ -1786,6 +1786,36 @@ def inject_theme(brand: str):
         unsafe_allow_html=True
     )
 
+def inject_nav_css():
+    # Style for Top Navigation "Text Links"
+    # We use a custom class .nav-container to isolate these buttons
+    st.markdown("""
+    <style>
+    .nav-container button[kind="secondary"] {
+        background-color: transparent !important;
+        border: none !important;
+        color: inherit !important;
+        padding: 0.5rem 0.5rem !important;
+        margin: 0 !important;
+        transition: all 0.2s ease;
+        box-shadow: none !important;
+    }
+    .nav-container button[kind="secondary"]:hover {
+        background-color: rgba(128, 128, 128, 0.1) !important;
+        text-decoration: none !important;
+    }
+    .nav-container button[kind="secondary"]:focus {
+        box-shadow: none !important;
+        border: none !important;
+        outline: none !important;
+    }
+    .nav-container button[kind="secondary"] p {
+        font-size: 16px !important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+
 # -----------------------------
 # Main
 # -----------------------------
@@ -1798,6 +1828,7 @@ def main_app():
     
     # Inject Theme
     inject_theme(ctx.brand)
+    inject_nav_css()
 
     # -----------------------------
     # Canonical Navigation State
@@ -1808,50 +1839,46 @@ def main_app():
     PAGES = ["Landing", "Financials", "Operations", "AI Insights", "Workflows", "Governance", "NLP Query"]
 
     # Callbacks to sync widget state -> canonical state
-    def sync_from_top():
-        st.session_state["nav_page"] = st.session_state["nav_top"]
-
     def sync_from_side():
         st.session_state["nav_page"] = st.session_state["nav_side"]
 
     # -----------------------------
     # Top Navigation (Primary)
     # -----------------------------
+    # Wrap in custom class for styling the secondary buttons as text links
+    st.markdown('<div class="nav-container">', unsafe_allow_html=True)
     with st.container():
-        t1, t2, t3 = st.columns([1.5, 6, 1.5])
+        # Layout: [Title 2] [Nav Items 7] [User/Logout 2]
+        t1, t2, t3 = st.columns([1.5, 7.0, 1.5])
         
         with t1:
-            st.markdown("### TMHNA Intelligence")
+            st.markdown("#### TMHNA Intelligence")
         
         with t2:
-            # Horizontal Pill-Style Nav
-            # If current page is not in PAGES (unlikely), default to Landing
-            try:
-                curr_idx = PAGES.index(st.session_state["nav_page"])
-            except ValueError:
-                curr_idx = 0
-            
-            st.radio(
-                "Top Navigation",
-                PAGES,
-                index=curr_idx,
-                key="nav_top",
-                horizontal=True,
-                label_visibility="collapsed",
-                on_change=sync_from_top
-            )
+            # Horizontal Text Links
+            nav_cols = st.columns(len(PAGES))
+            for i, page in enumerate(PAGES):
+                is_active = (page == st.session_state["nav_page"])
+                # Visual highlight: Bold if active
+                label = f"**{page}**" if is_active else page
+                
+                with nav_cols[i]:
+                    if st.button(label, key=f"nav_btn_{page}", use_container_width=True):
+                         goto(page)
 
         with t3:
             # User & Logout logic
-            c_user, c_logout = st.columns([2, 1])
+            c_user, c_logout = st.columns([1.5, 1.0])
             with c_user:
-                st.write(f"**{ctx.actor}**")
                 st.caption(f"{ctx.role}")
+                st.write(f"**{ctx.actor}**")
             with c_logout:
-                if st.button("Logout", key="top_logout"):
+                # Primary Style avoids the .nav-container secondary button override
+                if st.button("Log out", key="top_logout", type="primary"):
                     st.session_state.clear()
                     st.rerun()
 
+    st.markdown('</div>', unsafe_allow_html=True)
     st.markdown("---")
 
     # -----------------------------
