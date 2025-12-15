@@ -26,6 +26,14 @@ import plotly.graph_objects as go
 import streamlit as st
 
 
+def set_page(page: str, **kwargs):
+    """
+    Updates the current page and any optional deep-link state (e.g., active section).
+    """
+    st.session_state["page"] = page
+    for k, v in kwargs.items():
+        st.session_state[k] = v
+
 def format_df(df: pd.DataFrame) -> pd.DataFrame:
     """
     Standardizes dataframe for display:
@@ -1002,49 +1010,78 @@ def sidebar_identity() -> UserContext:
 # Landing Page (Revamped)
 # -----------------------------
 def persona_landing(ctx: UserContext):
-    # Header with minimal subtitle
+    # Header
     st.title("Unified Financial Intelligence")
     st.markdown(f"#### Welcome, **{ctx.actor}**") 
     st.caption(f"Role: {ctx.role} | Brand Scope: {ctx.brand}")
 
     st.markdown("---")
     
-    # "What is this?" & "Who is it for?" via 3 high-level cards
-    c1, c2, c3 = st.columns(3)
+    st.subheader("Quick Actions")
     
+    # Row 1
+    c1, c2, c3, c4 = st.columns(4)
     with c1:
         with st.container(border=True):
-            st.subheader("Data Core")
-            st.write("Single Source of Truth")
-            st.caption("Consolidated P&L, Operations, and Liquidity data from SAP/Snowflake.")
+            st.markdown("**Executive Overview**")
+            st.caption("Consolidated P&L & Key Metrics")
+            if st.button("Go to Financials", key="ql_fin", use_container_width=True):
+                set_page("Financials", active_section_financials="P&L")
     
     with c2:
         with st.container(border=True):
-            st.subheader("Intelligence")
-            st.write("Predictive & Governance")
-            st.caption("AI-driven forecasting, anomaly detection, and automated stewardship.")
-    
+            st.markdown("**Cash & Liquidity**")
+            st.caption("Daily Cash Position & Sankey")
+            if st.button("View Cash", key="ql_cash", use_container_width=True):
+                set_page("Financials", active_section_financials="Cash & Liquidity")
+
     with c3:
         with st.container(border=True):
-            st.subheader("Action")
-            st.write("Write-Back Workflows")
-            st.caption("Journal simulation, variance commentary, and closed-loop audit trails.")
+            st.markdown("**Dealer Profitability**")
+            st.caption("Margin, Service, Warranty Heatmap")
+            if st.button("View Dealers", key="ql_dealers", use_container_width=True):
+                set_page("Operations", active_section_operations="Dealer Profitability")
 
-    st.markdown("### Modules")
+    with c4:
+        with st.container(border=True):
+            st.markdown("**Audit Log**")
+            st.caption("Governance Trail & History")
+            if st.button("View Audit Log", key="ql_audit", use_container_width=True):
+                set_page("Governance", active_section_governance="Audit Trail")
+
+    st.markdown("") # Spacer
+
+    # Row 2
+    c5, c6, c7, c8 = st.columns(4)
+    with c5:
+        with st.container(border=True):
+            st.markdown("**Inventory Valuation**")
+            st.caption("Plant-level Stock Value")
+            if st.button("View Inventory", key="ql_inv", use_container_width=True):
+                set_page("Operations", active_section_operations="Inventory Valuation")
     
-    # Executive summary of available modules based on typical flow
-    m1, m2, m3, m4 = st.columns(4)
-    with m1:
-        st.info("**Financials**\n\nP&L, Balance Sheet, Cash Flow, Intercompany.")
-    with m2:
-        st.success("**Operations**\n\nDealer Profitability, Fleet VIN P&L, Spend, Inventory.")
-    with m3:
-        st.warning("**AI Insights**\n\nCash Forecast, Anomaly Alerts, Predictive Maintenance.")
-    with m4:
-        st.error("**Governance**\n\nAudit Logs, RLS/Masking, KPI Dictionary, User Access.")
+    with c6:
+        with st.container(border=True):
+            st.markdown("**Intercompany**")
+            st.caption("Reconciliation status & breaks")
+            if st.button("View Intercompany", key="ql_ic", use_container_width=True):
+                set_page("Financials", active_section_financials="Intercompany")
+                
+    with c7:
+        with st.container(border=True):
+            st.markdown("**Ask Finance (NLP)**")
+            st.caption("Natural Language Query")
+            if st.button("Ask Question", key="ql_nlp", use_container_width=True):
+                set_page("NLP Query")
+
+    with c8:
+        with st.container(border=True):
+            st.markdown("**Simulate Journal**")
+            st.caption("Write-back Workflow")
+            if st.button("Create Journal", key="ql_journal", use_container_width=True):
+                set_page("Workflows", active_section_workflows="Journal Entry Simulation")
 
     st.markdown("---")
-    st.caption("Use the sidebar navigation to access specific modules.")
 
 
 
@@ -1062,6 +1099,7 @@ def module_financials(lake: Dict[str, pd.DataFrame], ctx: UserContext):
     intercompany = lake["source_intercompany"]
     gl_tx = lake["source_gl_tx"]
 
+    # Global Controls
     top = st.columns([1.2, 1.0, 0.8])
     with top[0]:
         level = st.selectbox("View level", ["Enterprise", "Brand", "Region", "Plant"], index=0)
@@ -1070,149 +1108,166 @@ def module_financials(lake: Dict[str, pd.DataFrame], ctx: UserContext):
     with top[2]:
         fx = st.text_input("CAD→USD FX rate (mock)", value="0.74")
 
-    # compute view
-    pl_view = compute_pl_view(gold_pl, ctx, level=level)
+    # Deep-link support
+    sections = ["P&L", "Balance Sheet", "Cash & Liquidity", "Intercompany", "Trace to Source"]
+    default_idx = 0
+    if "active_section_financials" in st.session_state:
+        if st.session_state["active_section_financials"] in sections:
+            default_idx = sections.index(st.session_state["active_section_financials"])
+    
+    section = st.radio("View", sections, index=default_idx, horizontal=True, label_visibility="collapsed")
+    st.markdown("---")
 
-    # overlay simulated journals
-    if show_sim:
-        pl_view_sim = add_simulated_journal_to_pl(pl_view.rename(columns={"amount_usd": "amount_usd"}), ctx)
-    else:
-        pl_view_sim = pl_view
+    # 1. P&L
+    if section == "P&L":
+        # compute view
+        pl_view = compute_pl_view(gold_pl, ctx, level=level)
 
-    # KPIs
-    kpis = compute_kpis(pl_view_sim)
-    k1, k2, k3, k4 = st.columns(4)
-    kpi_card("Revenue (latest month)", money(kpis["Revenue"]), help_text="Definition: sum(Revenue) after CAD→USD normalization (mock).")
-    kpi_card("Gross Profit", money(kpis["Gross Profit"]), help_text="Definition: Revenue + COGS.")
-    kpi_card("Gross Margin %", pct(kpis["Gross Margin %"]), help_text="Definition: Gross Profit / Revenue.")
-    kpi_card("EBITDA (mock)", money(kpis["EBITDA (mock)"]), help_text="Definition: Gross Profit + all Opex lines (simplified).")
-
-    st.markdown("#### Consolidated P&L trend (rolling 12 months)")
-    pl = pl_view_sim.copy()
-    pl["posting_month"] = pd.to_datetime(pl["posting_month"])
-    last12 = pl[pl["posting_month"] >= (pl["posting_month"].max() - pd.DateOffset(months=11))]
-    # pivot to compute totals
-    pivot = last12.groupby(["posting_month", "gl_name"], as_index=False)["amount_usd"].sum()
-    fig = px.line(pivot, x="posting_month", y="amount_usd", color="gl_name", markers=False)
-    fig.update_layout(height=380, legend_title_text="P&L Line")
-    st.plotly_chart(fig, use_container_width=True)
-    audit("VIEW", "FINANCIALS_PNL", details={"level": level, "include_simulated": bool(show_sim)})
-
-    # Balance Sheet
-    st.markdown("#### Balance Sheet snapshot + ratios")
-    bs_view = bs.copy()
-    bs_view = rls_filter(bs_view.rename(columns={"asof_month": "posting_month"}), ctx)
-    bs_view = bs_view.rename(columns={"posting_month": "asof_month"})
-    latest = bs_view["asof_month"].max()
-    bs_latest = bs_view[bs_view["asof_month"] == latest].groupby(["brand"], as_index=False)[
-        ["assets_usd", "liabilities_usd", "equity_usd", "cash_usd", "ar_usd", "inventory_usd", "ap_usd", "debt_usd"]
-    ].sum()
-
-    # Ratios
-    bs_latest["debt_to_equity"] = bs_latest["debt_usd"] / bs_latest["equity_usd"].replace(0, np.nan)
-    bs_latest["current_ratio"] = (bs_latest["cash_usd"] + bs_latest["ar_usd"] + bs_latest["inventory_usd"]) / (bs_latest["ap_usd"] + 1e-6)
-
-    c1, c2 = st.columns([1.3, 1.0])
-    with c1:
-        st.dataframe(format_df(bs_latest), use_container_width=True, hide_index=True)
-    with c2:
-        # Simple waterfall-like bar
-        fig2 = go.Figure()
-        for _, row in bs_latest.iterrows():
-            fig2.add_trace(go.Bar(name=row["brand"], x=["Assets", "Liabilities", "Equity"], y=[row["assets_usd"], row["liabilities_usd"], row["equity_usd"]]))
-        fig2.update_layout(height=300, barmode="group", legend_title_text="Brand")
-        st.plotly_chart(fig2, use_container_width=True)
-        st.caption("Ratios (mock): Debt/Equity and Current Ratio computed from snapshot fields.")
-
-    audit("VIEW", "FINANCIALS_BALANCE_SHEET", details={"asof_month": str(latest.date()) if hasattr(latest, "date") else str(latest)})
-
-    # Cash & liquidity + Sankey
-    st.markdown("#### Cash Flow & Liquidity (JPM Chase feed — mock)")
-    bank_df = bank.sort_values("date")
-    window = st.slider("Show last N days", min_value=14, max_value=120, value=60, step=1)
-    bank_df = bank_df[bank_df["date"] >= (bank_df["date"].max() - dt.timedelta(days=int(window)))]
-
-    left, right = st.columns([1.2, 1.0])
-    with left:
-        fig3 = px.line(bank_df, x="date", y="cash_ending_usd")
-        fig3.update_layout(height=320, yaxis_title="USD")
-        st.plotly_chart(fig3, use_container_width=True)
-
-    with right:
-        # Sankey: inflow -> cash -> outflow (simplified)
-        inflow = float(bank_df["cash_inflow_usd"].sum())
-        outflow = float((-bank_df["cash_outflow_usd"]).sum())
-        sankey = go.Figure(
-            data=[
-                go.Sankey(
-                    node=dict(label=["Inflow", "Cash Position", "Outflow"]),
-                    link=dict(source=[0, 1], target=[1, 2], value=[inflow, outflow]),
-                )
-            ]
-        )
-        sankey.update_layout(height=320)
-        st.plotly_chart(sankey, use_container_width=True)
-        st.caption("Sankey visualizes Source → Use over the selected window (mock).")
-
-    audit("VIEW", "FINANCIALS_CASH", details={"window_days": int(window)})
-
-    # AP/AR aging
-    st.markdown("#### AP/AR Aging (summary)")
-    aging_view = aging.copy()
-    # apply RLS-like filters by brand/region (if available)
-    if ctx.role in ["Executive", "Auditor"]:
-        pass
-    else:
-        aging_view = aging_view[(aging_view["brand"] == ctx.brand) & (aging_view["region"] == ctx.region)]
-
-    pivot_aging = aging_view.groupby(["bucket"], as_index=False)[["ap_usd", "ar_usd"]].sum()
-    fig4 = px.bar(pivot_aging, x="bucket", y=["ap_usd", "ar_usd"], barmode="group")
-    fig4.update_layout(height=300, yaxis_title="USD")
-    st.plotly_chart(fig4, use_container_width=True)
-
-    # Intercompany reconciliation
-    st.markdown("#### Intercompany Reconciliation (automated matching — mock)")
-    ic = intercompany.copy()
-    if ctx.role not in ["Executive", "Auditor"]:
-        # Restrict to their region/brand visibility
-        if ctx.role == "Raymond Regional Manager":
-            ic = ic[ic["buyer_brand"] == "Raymond"]
-            ic = ic[ic["region"] == ctx.region]
+        # overlay simulated journals
+        if show_sim:
+            pl_view_sim = add_simulated_journal_to_pl(pl_view.rename(columns={"amount_usd": "amount_usd"}), ctx)
         else:
-            ic = ic[ic["region"] == ctx.region]
-    matched = (ic["status"] == "MATCHED").mean() if len(ic) else 0.0
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Items", f"{len(ic):,}")
-    c2.metric("Matched rate", pct(matched))
-    if "amount_usd" in ic.columns:
-        open_amt = float(ic.loc[ic["status"] == "OPEN", "amount_usd"].sum())
-    elif "amount" in ic.columns:
-        open_amt = float(ic.loc[ic["status"] == "OPEN", "amount"].sum())
-    else:
-        open_amt = 0.0
+            pl_view_sim = pl_view
 
-    c3.metric("Open $ (USD)", money(open_amt))
+        # KPIs
+        kpis = compute_kpis(pl_view_sim)
+        k1, k2, k3, k4 = st.columns(4)
+        kpi_card("Revenue (latest month)", money(kpis["Revenue"]), help_text="Definition: sum(Revenue) after CAD→USD normalization (mock).")
+        kpi_card("Gross Profit", money(kpis["Gross Profit"]), help_text="Definition: Revenue + COGS.")
+        kpi_card("Gross Margin %", pct(kpis["Gross Margin %"]), help_text="Definition: Gross Profit / Revenue.")
+        kpi_card("EBITDA (mock)", money(kpis["EBITDA (mock)"]), help_text="Definition: Gross Profit + all Opex lines (simplified).")
 
-    st.dataframe(format_df(ic.head(25)), use_container_width=True, hide_index=True)
+        st.markdown("#### Consolidated P&L trend (rolling 12 months)")
+        pl = pl_view_sim.copy()
+        pl["posting_month"] = pd.to_datetime(pl["posting_month"])
+        last12 = pl[pl["posting_month"] >= (pl["posting_month"].max() - pd.DateOffset(months=11))]
+        # pivot to compute totals
+        pivot = last12.groupby(["posting_month", "gl_name"], as_index=False)["amount_usd"].sum()
+        fig = px.line(pivot, x="posting_month", y="amount_usd", color="gl_name", markers=False)
+        fig.update_layout(height=380, legend_title_text="P&L Line")
+        st.plotly_chart(fig, use_container_width=True)
+        audit("VIEW", "FINANCIALS_PNL", details={"level": level, "include_simulated": bool(show_sim)})
 
-    audit("VIEW", "FINANCIALS_INTERCOMPANY", details={"rows": int(len(ic))})
+    # 2. Balance Sheet
+    elif section == "Balance Sheet":
+        st.markdown("#### Balance Sheet snapshot + ratios")
+        bs_view = bs.copy()
+        bs_view = rls_filter(bs_view.rename(columns={"asof_month": "posting_month"}), ctx)
+        bs_view = bs_view.rename(columns={"posting_month": "asof_month"})
+        latest = bs_view["asof_month"].max()
+        bs_latest = bs_view[bs_view["asof_month"] == latest].groupby(["brand"], as_index=False)[
+            ["assets_usd", "liabilities_usd", "equity_usd", "cash_usd", "ar_usd", "inventory_usd", "ap_usd", "debt_usd"]
+        ].sum()
 
-    # Trace to source: select KPI -> see underlying transactions
-    st.markdown("#### Trace to Source (auditor-friendly)")
-    line = st.selectbox("Pick a P&L line to trace", sorted(gold_pl["gl_name"].unique()), index=0)
-    month = st.selectbox("Month", sorted(pd.to_datetime(gold_pl["posting_month"]).dt.date.unique()), index=len(sorted(pd.to_datetime(gold_pl["posting_month"]).dt.date.unique())) - 1)
-    month_ts = pd.to_datetime(month)
+        # Ratios
+        bs_latest["debt_to_equity"] = bs_latest["debt_usd"] / bs_latest["equity_usd"].replace(0, np.nan)
+        bs_latest["current_ratio"] = (bs_latest["cash_usd"] + bs_latest["ar_usd"] + bs_latest["inventory_usd"]) / (bs_latest["ap_usd"] + 1e-6)
 
-    tx = gl_tx.copy()
-    tx["posting_month"] = pd.to_datetime(tx["posting_month"])
-    tx_f = tx[(tx["posting_month"] == month_ts) & (tx["gl_name"] == line)].copy()
-    tx_f = rls_filter(tx_f, ctx)
-    tx_f = mask_sensitive(tx_f, ctx)
+        c1, c2 = st.columns([1.3, 1.0])
+        with c1:
+            st.dataframe(format_df(bs_latest), use_container_width=True, hide_index=True)
+        with c2:
+            # Simple waterfall-like bar
+            fig2 = go.Figure()
+            for _, row in bs_latest.iterrows():
+                fig2.add_trace(go.Bar(name=row["brand"], x=["Assets", "Liabilities", "Equity"], y=[row["assets_usd"], row["liabilities_usd"], row["equity_usd"]]))
+            fig2.update_layout(height=300, barmode="group", legend_title_text="Brand")
+            st.plotly_chart(fig2, use_container_width=True)
+            st.caption("Ratios (mock): Debt/Equity and Current Ratio computed from snapshot fields.")
+        
+        audit("VIEW", "FINANCIALS_BALANCE_SHEET", details={"asof_month": str(latest.date()) if hasattr(latest, "date") else str(latest)})
 
-    st.caption("Click a document number below to simulate lineage (doc → source system → transaction).")
-    st.dataframe(format_df(tx_f[["source_system", "doc_no", "brand", "region", "plant", "gl_name", "amount", "currency", "vendor_raw", "cost_center", "memo"]].head(50)),
-                 use_container_width=True, hide_index=True)
-    audit("TRACE_TO_SOURCE", "GL_TRANSACTION", details={"gl_name": line, "month": str(month)})
+    # 3. Cash & Liquidity
+    elif section == "Cash & Liquidity":
+        st.markdown("#### Cash Flow & Liquidity (JPM Chase feed — mock)")
+        bank_df = bank.sort_values("date")
+        window = st.slider("Show last N days", min_value=14, max_value=120, value=60, step=1)
+        bank_df = bank_df[bank_df["date"] >= (bank_df["date"].max() - dt.timedelta(days=int(window)))]
+
+        left, right = st.columns([1.2, 1.0])
+        with left:
+            fig3 = px.line(bank_df, x="date", y="cash_ending_usd")
+            fig3.update_layout(height=320, yaxis_title="USD")
+            st.plotly_chart(fig3, use_container_width=True)
+
+        with right:
+            # Sankey: inflow -> cash -> outflow (simplified)
+            inflow = float(bank_df["cash_inflow_usd"].sum())
+            outflow = float((-bank_df["cash_outflow_usd"]).sum())
+            sankey = go.Figure(
+                data=[
+                    go.Sankey(
+                        node=dict(label=["Inflow", "Cash Position", "Outflow"]),
+                        link=dict(source=[0, 1], target=[1, 2], value=[inflow, outflow]),
+                    )
+                ]
+            )
+            sankey.update_layout(height=320)
+            st.plotly_chart(sankey, use_container_width=True)
+            st.caption("Sankey visualizes Source → Use over the selected window (mock).")
+
+        audit("VIEW", "FINANCIALS_CASH", details={"window_days": int(window)})
+
+        # AP/AR aging
+        st.markdown("#### AP/AR Aging (summary)")
+        aging_view = aging.copy()
+        # apply RLS-like filters by brand/region (if available)
+        if ctx.role in ["Executive", "Auditor"]:
+            pass
+        else:
+            aging_view = aging_view[(aging_view["brand"] == ctx.brand) & (aging_view["region"] == ctx.region)]
+
+        pivot_aging = aging_view.groupby(["bucket"], as_index=False)[["ap_usd", "ar_usd"]].sum()
+        fig4 = px.bar(pivot_aging, x="bucket", y=["ap_usd", "ar_usd"], barmode="group")
+        fig4.update_layout(height=300, yaxis_title="USD")
+        st.plotly_chart(fig4, use_container_width=True)
+
+    # 4. Intercompany
+    elif section == "Intercompany":
+        st.markdown("#### Intercompany Reconciliation (automated matching — mock)")
+        ic = intercompany.copy()
+        if ctx.role not in ["Executive", "Auditor"]:
+            # Restrict to their region/brand visibility
+            if ctx.role == "Raymond Regional Manager":
+                ic = ic[ic["buyer_brand"] == "Raymond"]
+                ic = ic[ic["region"] == ctx.region]
+            else:
+                ic = ic[ic["region"] == ctx.region]
+        matched = (ic["status"] == "MATCHED").mean() if len(ic) else 0.0
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Items", f"{len(ic):,}")
+        c2.metric("Matched rate", pct(matched))
+        if "amount_usd" in ic.columns:
+            open_amt = float(ic.loc[ic["status"] == "OPEN", "amount_usd"].sum())
+        elif "amount" in ic.columns:
+            open_amt = float(ic.loc[ic["status"] == "OPEN", "amount"].sum())
+        else:
+            open_amt = 0.0
+
+        c3.metric("Open $ (USD)", money(open_amt))
+
+        st.dataframe(format_df(ic.head(25)), use_container_width=True, hide_index=True)
+
+        audit("VIEW", "FINANCIALS_INTERCOMPANY", details={"rows": int(len(ic))})
+
+    # 5. Trace to Source
+    elif section == "Trace to Source":
+        # Trace to source: select KPI -> see underlying transactions
+        st.markdown("#### Trace to Source (auditor-friendly)")
+        line = st.selectbox("Pick a P&L line to trace", sorted(gold_pl["gl_name"].unique()), index=0)
+        month = st.selectbox("Month", sorted(pd.to_datetime(gold_pl["posting_month"]).dt.date.unique()), index=len(sorted(pd.to_datetime(gold_pl["posting_month"]).dt.date.unique())) - 1)
+        month_ts = pd.to_datetime(month)
+
+        tx = gl_tx.copy()
+        tx["posting_month"] = pd.to_datetime(tx["posting_month"])
+        tx_f = tx[(tx["posting_month"] == month_ts) & (tx["gl_name"] == line)].copy()
+        tx_f = rls_filter(tx_f, ctx)
+        tx_f = mask_sensitive(tx_f, ctx)
+
+        st.caption("Click a document number below to simulate lineage (doc → source system → transaction).")
+        st.dataframe(format_df(tx_f[["source_system", "doc_no", "brand", "region", "plant", "gl_name", "amount", "currency", "vendor_raw", "cost_center", "memo"]].head(50)),
+                     use_container_width=True, hide_index=True)
+        audit("TRACE_TO_SOURCE", "GL_TRANSACTION", details={"gl_name": line, "month": str(month)})
 
 
 def module_operations(lake: Dict[str, pd.DataFrame], ctx: UserContext):
@@ -1227,9 +1282,18 @@ def module_operations(lake: Dict[str, pd.DataFrame], ctx: UserContext):
     spend = lake["source_spend"]
     inventory = lake["source_inventory"]
 
-    tab1, tab2, tab3, tab4 = st.tabs(["Dealer Profitability", "Fleet VIN P&L", "Spend Analytics", "Inventory Valuation"])
+    # Deep-link support: Programmatic Navigation
+    sections = ["Dealer Profitability", "Fleet VIN P&L", "Spend Analytics", "Inventory Valuation"]
+    default_idx = 0
+    if "active_section_operations" in st.session_state:
+        if st.session_state["active_section_operations"] in sections:
+            default_idx = sections.index(st.session_state["active_section_operations"])
+    
+    # Use Radio for sub-nav instead of Tabs to support setting state (tabs don't support programmatic 'index' well yet)
+    section = st.radio("View", sections, index=default_idx, horizontal=True, label_visibility="collapsed")
+    st.markdown("---")
 
-    with tab1:
+    if section == "Dealer Profitability":
         df = dealers.copy()
         # RLS by brand for non-exec roles; exec sees both
         if ctx.role not in ["Executive", "Auditor"]:
@@ -1252,7 +1316,7 @@ def module_operations(lake: Dict[str, pd.DataFrame], ctx: UserContext):
         st.dataframe(format_df(df.sort_values("profit_usd", ascending=False)), use_container_width=True, hide_index=True)
         audit("VIEW", "OPERATIONS_DEALERS")
 
-    with tab2:
+    elif section == "Fleet VIN P&L":
         df = fleet.copy()
         df = rls_filter(df, ctx)
         st.markdown("##### VIN-level profitability (sale margin + lifetime service – warranty)")
@@ -1265,7 +1329,7 @@ def module_operations(lake: Dict[str, pd.DataFrame], ctx: UserContext):
             st.plotly_chart(fig, use_container_width=True)
         audit("VIEW", "OPERATIONS_FLEET")
 
-    with tab3:
+    elif section == "Spend Analytics":
         st.markdown("##### Duplicate Vendor Families (AI-normalized)")
         df = spend.copy()
         # For stewards allow all; otherwise restrict to brand
@@ -1285,7 +1349,7 @@ def module_operations(lake: Dict[str, pd.DataFrame], ctx: UserContext):
         st.dataframe(format_df(df.sample(30, random_state=7)), use_container_width=True, hide_index=True)
         audit("VIEW", "OPERATIONS_SPEND")
 
-    with tab4:
+    elif section == "Inventory Valuation":
         st.markdown("##### Inventory valuation across plants (real-time — mock)")
         df = inventory.copy()
         df = rls_filter(df, ctx)
@@ -1293,7 +1357,7 @@ def module_operations(lake: Dict[str, pd.DataFrame], ctx: UserContext):
         fig.update_layout(height=360, yaxis_title="USD")
         st.plotly_chart(fig, use_container_width=True)
 
-        st.dataframe(df.sort_values("inventory_value_usd", ascending=False), use_container_width=True, hide_index=True)
+        st.dataframe(format_df(df.sort_values("inventory_value_usd", ascending=False)), use_container_width=True, hide_index=True)
         audit("VIEW", "OPERATIONS_INVENTORY")
 
 
@@ -1309,9 +1373,17 @@ def module_ai(lake: Dict[str, pd.DataFrame], ctx: UserContext):
     tele = lake["source_telematics"]
     fleet = lake["source_fleet"]
 
-    tab1, tab2, tab3 = st.tabs(["Smart Forecasting", "Anomaly Detection", "Predictive Maintenance Revenue"])
+    # Deep-link support
+    sections = ["Smart Forecasting", "Anomaly Detection", "Predictive Maintenance Revenue"]
+    default_idx = 0
+    if "active_section_ai" in st.session_state:
+        if st.session_state["active_section_ai"] in sections:
+            default_idx = sections.index(st.session_state["active_section_ai"])
+    
+    section = st.radio("View", sections, index=default_idx, horizontal=True, label_visibility="collapsed")
+    st.markdown("---")
 
-    with tab1:
+    if section == "Smart Forecasting":
         st.markdown("##### Cash forecast (next 30 days) — ML proxy")
         days = st.slider("Days forward", 14, 90, 30, 1)
         fc = smart_cash_forecast(bank, days_forward=int(days))
@@ -1320,7 +1392,7 @@ def module_ai(lake: Dict[str, pd.DataFrame], ctx: UserContext):
         st.plotly_chart(fig, use_container_width=True)
         audit("VIEW", "AI_CASH_FORECAST", details={"days_forward": int(days)})
 
-    with tab2:
+    elif section == "Anomaly Detection":
         st.markdown("##### GL anomaly alerts (z-score)")
         z = st.slider("Sensitivity (z-threshold)", 1.5, 4.0, 2.6, 0.1)
         out = anomaly_detection(gl_tx, ctx, z_thresh=float(z))
@@ -1328,7 +1400,7 @@ def module_ai(lake: Dict[str, pd.DataFrame], ctx: UserContext):
         st.caption("Example alert: 'Unusual expense category for this cost center' (mock).")
         audit("VIEW", "AI_ANOMALY_DETECTION", details={"z_threshold": float(z), "rows": int(len(out))})
 
-    with tab3:
+    elif section == "Predictive Maintenance Revenue":
         st.markdown("##### Service revenue forecast driven by iWAREHOUSE/MyInsights-like telematics (mock)")
         pred = predictive_maintenance_revenue(tele, fleet)
         pred = rls_filter(pred, ctx)
@@ -1345,9 +1417,17 @@ def module_workflows(lake: Dict[str, pd.DataFrame], ctx: UserContext):
 
     perms = ROLE_PERMS.get(ctx.role, {})
 
-    tab1, tab2, tab3 = st.tabs(["Journal Entry Simulation", "Stewardship Queue", "Commentary & Annotation"])
+    # Deep-link support
+    sections = ["Journal Entry Simulation", "Stewardship Queue", "Commentary & Annotation"]
+    default_idx = 0
+    if "active_section_workflows" in st.session_state:
+        if st.session_state["active_section_workflows"] in sections:
+            default_idx = sections.index(st.session_state["active_section_workflows"])
+    
+    section = st.radio("View", sections, index=default_idx, horizontal=True, label_visibility="collapsed")
+    st.markdown("---")
 
-    with tab1:
+    if section == "Journal Entry Simulation":
         st.markdown("##### Simulate a journal entry impact before posting")
         if not perms.get("can_journal", False):
             st.warning("Your role does not have journal simulation privileges in this PoC.")
@@ -1394,7 +1474,7 @@ def module_workflows(lake: Dict[str, pd.DataFrame], ctx: UserContext):
             st.markdown("###### Current journal simulations (unposted)")
             st.dataframe(unposted, use_container_width=True, hide_index=True)
 
-    with tab2:
+    elif section == "Stewardship Queue":
         st.markdown("##### Stewardship Queue (Tinder-like approve / reject)")
         if not perms.get("can_steward", False):
             st.warning("Your role does not have stewardship privileges in this PoC.")
@@ -1405,7 +1485,7 @@ def module_workflows(lake: Dict[str, pd.DataFrame], ctx: UserContext):
             con.close()
 
             if q.empty:
-                st.success("No pending stewardship items.")
+                st.success("No pending items.")
             else:
                 item = q.iloc[0].to_dict()
                 with st.container(border=True):
@@ -1442,7 +1522,7 @@ def module_workflows(lake: Dict[str, pd.DataFrame], ctx: UserContext):
                 st.markdown("###### Pending queue")
                 st.dataframe(q, use_container_width=True, hide_index=True)
 
-    with tab3:
+    elif section == "Commentary & Annotation":
         st.markdown("##### Commentary & annotation (write-back to data layer — simulated)")
         if not perms.get("can_annotate", False):
             st.warning("Your role does not have annotation privileges in this PoC.")
@@ -1481,9 +1561,17 @@ def module_governance(lake: Dict[str, pd.DataFrame], ctx: UserContext):
 
     perms = ROLE_PERMS.get(ctx.role, {})
 
-    tab1, tab2, tab3, tab4 = st.tabs(["Access Controls", "Audit Trail", "Controlled Export", "Alerts + KPI Dictionary"])
+    # Deep-link support
+    sections = ["Access Controls", "Audit Trail", "Controlled Export", "Alerts + KPI Dictionary"]
+    default_idx = 0
+    if "active_section_governance" in st.session_state:
+        if st.session_state["active_section_governance"] in sections:
+            default_idx = sections.index(st.session_state["active_section_governance"])
+    
+    section = st.radio("View", sections, index=default_idx, horizontal=True, label_visibility="collapsed")
+    st.markdown("---")
 
-    with tab1:
+    if section == "Access Controls":
         st.markdown("##### Simulated Row-Level Security (RLS) & Masking")
         st.write(
             f"""
@@ -1506,7 +1594,7 @@ def module_governance(lake: Dict[str, pd.DataFrame], ctx: UserContext):
             st.dataframe(format_df(tx2[["source_system", "doc_no", "brand", "region", "plant", "gl_name", "amount", "vendor_raw", "cost_center", "memo"]]), use_container_width=True, hide_index=True)
         audit("VIEW", "GOV_ACCESS_CONTROLS")
 
-    with tab2:
+    elif section == "Audit Trail":
         st.markdown("##### Immutable audit log (simulated)")
         if not perms.get("can_audit", False):
             st.warning("Your role does not have audit viewing privileges in this PoC.")
@@ -1518,7 +1606,7 @@ def module_governance(lake: Dict[str, pd.DataFrame], ctx: UserContext):
             st.caption("Immutable record of all business-critical actions.")
             audit("VIEW", "GOV_AUDIT_LOG")
 
-    with tab3:
+    elif section == "Controlled Export":
         st.markdown("##### Export to Excel (controlled) — with watermark + audit logging")
         if not perms.get("can_export", False):
             st.warning("Your role does not have export privileges in this PoC.")
@@ -1538,7 +1626,7 @@ def module_governance(lake: Dict[str, pd.DataFrame], ctx: UserContext):
                 type="primary",
             )
 
-    with tab4:
+    elif section == "Alerts + KPI Dictionary":
         st.markdown("##### Alerting (thresholds push to Teams — simulated)")
         metric = st.selectbox("Metric", ["Gross Margin %", "EBITDA (mock)", "Cash Position"], index=0)
         comparator = st.selectbox("Comparator", ["<", ">"], index=0)
@@ -1711,14 +1799,65 @@ def main_app():
     # Inject Theme
     inject_theme(ctx.brand)
 
-    # Top nav (persona-based)
+    # -----------------------------
+    # Navigation State & Logic
+    # -----------------------------
+    PAGES = ["Landing", "Financials", "Operations", "AI Insights", "Workflows", "Governance", "NLP Query"]
+    
+    if "page" not in st.session_state:
+        st.session_state["page"] = "Landing"
+
+    # Top Navigation Bar (Redundant & Syncs with Sidebar)
+    # Visual container for top nav
+    with st.container():
+        # Use columns: Logo/Title area | Nav Items | User Profile/Logout
+        # We'll approximate an enterprise header layout
+        tn1, tn2, tn3 = st.columns([2, 5, 1])
+        
+        with tn1:
+            st.markdown("### TMHNA Intelligence")
+        
+        with tn2:
+            # Horizontal buttons for nav
+            # We use a trick: multiple columns for buttons to make them look like a bar
+            nav_cols = st.columns(len(PAGES))
+            for i, page_name in enumerate(PAGES):
+                # Highlight active page button style if possible, or just standard
+                # Streamlit buttons don't support "active" state styling easily without custom CSS,
+                # but we can rely on the Sidebar/Page content to show where we are.
+                if nav_cols[i].button(page_name, key=f"top_nav_{page_name}", use_container_width=True):
+                    set_page(page_name)
+
+        with tn3:
+            # User profile / Logout
+            # We already have logout in sidebar, adding a small icon/button here
+            if st.button("👤 User", help=f"Signed in as {ctx.actor}"):
+                pass # Just informational
+            # Logout is redundant with sidebar, skipping to avoid clutter/state issues or adding simple one
+            # if st.button("Logout", key="top_logout"):
+            #    st.session_state["authenticated"] = False
+            #    st.rerun()
+
+    st.markdown("---")
+
+    # Sidebar Sync: Use 'page' key to bind directly to session state
     st.sidebar.markdown("---")
     st.sidebar.markdown("### Navigation")
-    module = st.sidebar.radio(
+    
+    # We use accessibility helper (label_visibility) if needed, but standard is fine
+    # Key="page" ensures bidirectional sync: if top nav updates state['page'], this updates.
+    # If this updates, state['page'] updates.
+    st.sidebar.radio(
         "Go to",
-        ["Landing", "Financials", "Operations", "AI Insights", "Workflows", "Governance", "NLP Query"],
-        index=0,
+        PAGES,
+        key="page",
+        label_visibility="collapsed"
     )
+
+    # -----------------------------
+    # Routing
+    # -----------------------------
+    module = st.session_state["page"]
 
     if module == "Landing":
         persona_landing(ctx)
