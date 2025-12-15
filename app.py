@@ -26,6 +26,33 @@ import plotly.graph_objects as go
 import streamlit as st
 
 
+def format_df(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Standardizes dataframe for display:
+    - Capitalizes headers (underscore -> space)
+    - Formats floats as strings with separators (money/%)
+    """
+    out = df.copy()
+    
+    # 1. Column renaming
+    out.columns = [c.replace("_", " ").title().replace("Usd", "USD").replace("Id", "ID") for c in out.columns]
+    
+    # 2. Value formatting (heuristic)
+    for col in out.columns:
+        # Check if float
+        if pd.api.types.is_float_dtype(out[col]):
+            # If column name suggests money
+            if "USD" in col or "Amount" in col or "Profit" in col or "Cost" in col or "Price" in col:
+                out[col] = out[col].apply(lambda x: f"${x:,.2f}")
+            # If column name suggests percentage
+            elif "%" in col or "Margin" in col or "Rate" in col or "Ratio" in col:
+                out[col] = out[col].apply(lambda x: f"{x:.1%}")
+            # General number
+            else:
+                 out[col] = out[col].apply(lambda x: f"{x:,.2f}")
+                 
+    return out
+
 # -----------------------------
 # Auth & Security (Simple Gate)
 # -----------------------------
@@ -620,14 +647,14 @@ def rls_filter(df: pd.DataFrame, ctx: UserContext) -> pd.DataFrame:
     elif "brand" in out.columns:
         out = out[out["brand"] == ctx.brand]
 
-    if "region" in out.columns and ctx.brand != "TMHNA (Consolidated)":
+    if "region" in out.columns:
         if ctx.region in REGIONS:
              out = out[out["region"] == ctx.region]
     
-    if "plant" in out.columns and ctx.brand != "TMHNA (Consolidated)":
-         # Only filter if not consolidated view (or logic dictates otherwise)
-         # For simplicity, if consolidated, we show all plants.
-        out = out[out["plant"] == ctx.plant]
+    if "plant" in out.columns:
+         # Filter by plant if selected and valid
+        if ctx.plant in [p[1] for p in PLANTS]: 
+             out = out[out["plant"] == ctx.plant]
         
     return out
 
@@ -970,43 +997,55 @@ def sidebar_identity() -> UserContext:
     return ctx
 
 
+
+# -----------------------------
+# Landing Page (Revamped)
+# -----------------------------
 def persona_landing(ctx: UserContext):
-    st.title(APP_TITLE)
-    st.caption(APP_SUBTITLE)
-    st.markdown(
-        f"""
-        **Landing page** is persona-based. You are signed in as **{ctx.actor}** (`{ctx.role}`).
-        - **Goal:** eliminate manual reconciliation, speed up close, and provide trusted, governed KPIs for a $7B unified digital core.
-        """
-    )
+    # Header with minimal subtitle
+    st.title("Unified Financial Intelligence")
+    st.markdown(f"#### Welcome, **{ctx.actor}**") 
+    st.caption(f"Role: {ctx.role} | Brand Scope: {ctx.brand}")
 
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric("Identity", "Entra ID (simulated)", "SSO + Conditional Access")
-    with col2:
-        st.metric("Data Core", "Snowflake Lakehouse (mock)", "Bronze/Silver/Gold zones")
-    with col3:
-        st.metric("Semantic Layer", "SAP Datasphere (mock)", "Preserved hierarchies + currency logic")
+    st.markdown("---")
+    
+    # "What is this?" & "Who is it for?" via 3 high-level cards
+    c1, c2, c3 = st.columns(3)
+    
+    with c1:
+        with st.container(border=True):
+            st.subheader("Data Core")
+            st.write("Single Source of Truth")
+            st.caption("Consolidated P&L, Operations, and Liquidity data from SAP/Snowflake.")
+    
+    with c2:
+        with st.container(border=True):
+            st.subheader("Intelligence")
+            st.write("Predictive & Governance")
+            st.caption("AI-driven forecasting, anomaly detection, and automated stewardship.")
+    
+    with c3:
+        with st.container(border=True):
+            st.subheader("Action")
+            st.write("Write-Back Workflows")
+            st.caption("Journal simulation, variance commentary, and closed-loop audit trails.")
 
-    # Persona tiles
-    tiles = st.columns(3)
-    with tiles[0]:
-        with st.container(border=True):
-            st.subheader("Executive View")
-            st.write("High-level KPIs, margin drivers, liquidity, and alerts.")
-            st.caption("Best for: CFO, VP Finance, Brand leaders")
-    with tiles[1]:
-        with st.container(border=True):
-            st.subheader("Controller View (Sarah)")
-            st.write("Exceptions, unposted journals, reconciliation breaks, variance commentary.")
-            st.caption("Best for: close, controllership, FP&A")
-    with tiles[2]:
-        with st.container(border=True):
-            st.subheader("Plant Manager View")
-            st.write("Inventory valuation, operational KPIs, cost drivers, service forecasts.")
-            st.caption("Best for: ops leaders walking the floor")
+    st.markdown("### Modules")
+    
+    # Executive summary of available modules based on typical flow
+    m1, m2, m3, m4 = st.columns(4)
+    with m1:
+        st.info("**Financials**\n\nP&L, Balance Sheet, Cash Flow, Intercompany.")
+    with m2:
+        st.success("**Operations**\n\nDealer Profitability, Fleet VIN P&L, Spend, Inventory.")
+    with m3:
+        st.warning("**AI Insights**\n\nCash Forecast, Anomaly Alerts, Predictive Maintenance.")
+    with m4:
+        st.error("**Governance**\n\nAudit Logs, RLS/Masking, KPI Dictionary, User Access.")
 
-    st.info("Use the left navigation to explore modules: Financials, Operations, AI Insights, Workflows, Governance.")
+    st.markdown("---")
+    st.caption("Use the sidebar navigation to access specific modules.")
+
 
 
 def module_financials(lake: Dict[str, pd.DataFrame], ctx: UserContext):
@@ -1075,7 +1114,7 @@ def module_financials(lake: Dict[str, pd.DataFrame], ctx: UserContext):
 
     c1, c2 = st.columns([1.3, 1.0])
     with c1:
-        st.dataframe(bs_latest, use_container_width=True, hide_index=True)
+        st.dataframe(format_df(bs_latest), use_container_width=True, hide_index=True)
     with c2:
         # Simple waterfall-like bar
         fig2 = go.Figure()
@@ -1154,7 +1193,7 @@ def module_financials(lake: Dict[str, pd.DataFrame], ctx: UserContext):
 
     c3.metric("Open $ (USD)", money(open_amt))
 
-    st.dataframe(ic.head(25), use_container_width=True, hide_index=True)
+    st.dataframe(format_df(ic.head(25)), use_container_width=True, hide_index=True)
 
     audit("VIEW", "FINANCIALS_INTERCOMPANY", details={"rows": int(len(ic))})
 
@@ -1171,7 +1210,7 @@ def module_financials(lake: Dict[str, pd.DataFrame], ctx: UserContext):
     tx_f = mask_sensitive(tx_f, ctx)
 
     st.caption("Click a document number below to simulate lineage (doc → source system → transaction).")
-    st.dataframe(tx_f[["source_system", "doc_no", "brand", "region", "plant", "gl_name", "amount", "currency", "vendor_raw", "cost_center", "memo"]].head(50),
+    st.dataframe(format_df(tx_f[["source_system", "doc_no", "brand", "region", "plant", "gl_name", "amount", "currency", "vendor_raw", "cost_center", "memo"]].head(50)),
                  use_container_width=True, hide_index=True)
     audit("TRACE_TO_SOURCE", "GL_TRANSACTION", details={"gl_name": line, "month": str(month)})
 
@@ -1209,8 +1248,8 @@ def module_operations(lake: Dict[str, pd.DataFrame], ctx: UserContext):
         fig.update_layout(height=420)
         st.plotly_chart(fig, use_container_width=True)
 
-        st.markdown("##### Dealer table (unified revenue + service + warranty)")
-        st.dataframe(df.sort_values("profit_usd", ascending=False), use_container_width=True, hide_index=True)
+        st.markdown("##### Dealer Network Performance")
+        st.dataframe(format_df(df.sort_values("profit_usd", ascending=False)), use_container_width=True, hide_index=True)
         audit("VIEW", "OPERATIONS_DEALERS")
 
     with tab2:
@@ -1219,7 +1258,7 @@ def module_operations(lake: Dict[str, pd.DataFrame], ctx: UserContext):
         st.markdown("##### VIN-level profitability (sale margin + lifetime service – warranty)")
         c1, c2 = st.columns([1.0, 1.2])
         with c1:
-            st.dataframe(df.sort_values("vin_pnl_usd", ascending=False).head(25), use_container_width=True, hide_index=True)
+            st.dataframe(format_df(df.sort_values("vin_pnl_usd", ascending=False).head(25)), use_container_width=True, hide_index=True)
         with c2:
             fig = px.scatter(df, x="usage_hours", y="vin_pnl_usd", size="battery_cycles", hover_name="vin")
             fig.update_layout(height=380, xaxis_title="Usage hours (telematics)", yaxis_title="VIN P&L (USD)")
@@ -1227,21 +1266,23 @@ def module_operations(lake: Dict[str, pd.DataFrame], ctx: UserContext):
         audit("VIEW", "OPERATIONS_FLEET")
 
     with tab3:
-        st.markdown("##### Spend by vendor family + duplicate vendor IDs (AI-normalized — simulated)")
+        st.markdown("##### Duplicate Vendor Families (AI-normalized)")
         df = spend.copy()
         # For stewards allow all; otherwise restrict to brand
-        if ctx.role not in ["Executive", "Auditor", "Data Steward"]:
-            # no brand column here; keep full but note
-            pass
+        if ctx.role not in ["Executive", "Auditor", "Data Steward"] and "brand" in df.columns:
+             # spend mock might not have brand, but if it did...
+             pass
 
         # Simulate "AI aggregation" by canonical
         fam = df.groupby(["vendor_family", "vendor_canonical"], as_index=False)["amount_usd"].sum()
+        # Fix: Show textinfo so it's not empty boxes
         fig = px.treemap(fam, path=["vendor_family", "vendor_canonical"], values="amount_usd")
+        fig.update_traces(textinfo="label+value+percent parent")
         fig.update_layout(height=480)
         st.plotly_chart(fig, use_container_width=True)
 
-        st.markdown("##### Raw vendor duplicates (what stewards see)")
-        st.dataframe(df.sample(30, random_state=7), use_container_width=True, hide_index=True)
+        st.markdown("##### Raw Vendor List (Potential Duplicates)")
+        st.dataframe(format_df(df.sample(30, random_state=7)), use_container_width=True, hide_index=True)
         audit("VIEW", "OPERATIONS_SPEND")
 
     with tab4:
@@ -1443,26 +1484,26 @@ def module_governance(lake: Dict[str, pd.DataFrame], ctx: UserContext):
     tab1, tab2, tab3, tab4 = st.tabs(["Access Controls", "Audit Trail", "Controlled Export", "Alerts + KPI Dictionary"])
 
     with tab1:
-        st.markdown("##### Row-Level Security (RLS) + Masking (simulated)")
+        st.markdown("##### Simulated Row-Level Security (RLS) & Masking")
         st.write(
             f"""
-            **Your current scope:** Brand={ctx.brand}, Region={ctx.region}, Plant={ctx.plant}  
-            **Role policy:** {json.dumps(ROLE_PERMS.get(ctx.role, {}), indent=2)}
+            **Current User Scope:** Brand={ctx.brand}, Region={ctx.region}, Plant={ctx.plant}  
+            **Access Policy:** Active
             """
         )
-        st.caption("Try switching roles in the sidebar to see what changes in the data tables (vendor masking, cost center masking, plant restrictions).")
+        st.caption("Try switching roles in the sidebar to observe data access changes (e.g., vendor masking, cost center redaction).")
 
         # show sample
         tx = lake["source_gl_tx"].copy()
         tx = tx.sample(25, random_state=7)
         a = st.columns(2)
         with a[0]:
-            st.markdown("**Before**")
-            st.dataframe(tx[["source_system", "doc_no", "brand", "region", "plant", "gl_name", "amount", "vendor_raw", "cost_center", "memo"]], use_container_width=True, hide_index=True)
+            st.markdown("**Original Data (Pre-Policy)**")
+            st.dataframe(format_df(tx[["source_system", "doc_no", "brand", "region", "plant", "gl_name", "amount", "vendor_raw", "cost_center", "memo"]]), use_container_width=True, hide_index=True)
         with a[1]:
-            st.markdown("**After RLS + masking**")
+            st.markdown("**Governed Data (Post-Policy)**")
             tx2 = mask_sensitive(rls_filter(tx, ctx), ctx)
-            st.dataframe(tx2[["source_system", "doc_no", "brand", "region", "plant", "gl_name", "amount", "vendor_raw", "cost_center", "memo"]], use_container_width=True, hide_index=True)
+            st.dataframe(format_df(tx2[["source_system", "doc_no", "brand", "region", "plant", "gl_name", "amount", "vendor_raw", "cost_center", "memo"]]), use_container_width=True, hide_index=True)
         audit("VIEW", "GOV_ACCESS_CONTROLS")
 
     with tab2:
@@ -1473,8 +1514,8 @@ def module_governance(lake: Dict[str, pd.DataFrame], ctx: UserContext):
             con = db()
             log = pd.read_sql_query("SELECT * FROM audit_log ORDER BY ts DESC LIMIT 500", con)
             con.close()
-            st.dataframe(log, use_container_width=True, hide_index=True)
-            st.caption("Every VIEW/EXPORT/WRITE/APPROVE/REJECT action is recorded (mock SOX control).")
+            st.dataframe(format_df(log), use_container_width=True, hide_index=True)
+            st.caption("Immutable record of all business-critical actions.")
             audit("VIEW", "GOV_AUDIT_LOG")
 
     with tab3:
@@ -1549,8 +1590,8 @@ def module_governance(lake: Dict[str, pd.DataFrame], ctx: UserContext):
 
 
 def module_nlp(lake: Dict[str, pd.DataFrame], ctx: UserContext):
-    st.header("Natural Language Query (NLP) — simulated")
-    st.caption("Type a question like: 'Show me Q3 travel spend for Raymond Greene plant'.")
+    st.header("Natural Language Query")
+    st.caption("Ask questions about your data in plain English.")
 
     if not require_mfa(ctx):
         return
@@ -1559,8 +1600,8 @@ def module_nlp(lake: Dict[str, pd.DataFrame], ctx: UserContext):
     if st.button("Run query", type="primary"):
         parsed = parse_nl_query(q)
         audit("QUERY", "NLP", details={"query": q, "parsed": parsed})
-        st.write("**Parsed intent (rule-based):**")
-        st.json(parsed)
+        # HIDDEN: st.write("**Parsed intent (rule-based):**")
+        # HIDDEN: st.json(parsed)
 
         # Execute query over gold_pl
         pl = lake["gold_pl"].copy()
@@ -1588,8 +1629,72 @@ def module_nlp(lake: Dict[str, pd.DataFrame], ctx: UserContext):
             fig = px.line(out, x="posting_month", y="amount_usd", color="gl_name")
             fig.update_layout(height=360)
             st.plotly_chart(fig, use_container_width=True)
-            st.dataframe(out, use_container_width=True, hide_index=True)
+            st.dataframe(format_df(out), use_container_width=True, hide_index=True)
 
+
+
+# -----------------------------
+# Theming
+# -----------------------------
+def inject_theme(brand: str):
+    """
+    Injects CSS to override Streamlit styling based on brand selection.
+    TMH: Black/Grey/Orange
+    Raymond: Red/Black/White
+    TMHNA (Consolidated): Neutral Dark Blue/Grey
+    """
+    # Default (TMH)
+    primary_color = "#FF4D00"   # Orange
+    bg_color = "#F0F2F6"        # Light Grey default
+    sidebar_bg = "#FFFFFF"
+    
+    if brand == "Raymond":
+        primary_color = "#E11A2B" # Raymond Red
+        # Maybe a starker white/black contrast
+    elif brand == "TMHNA (Consolidated)":
+        primary_color = "#2C3E50" # Corporate Blue/Grey
+    
+    # CSS Injection
+    # Note: Streamlit theming is usually config.toml, but we can override some elements via CSS.
+    # We will target specific interactive elements if possible, or just the top bar color line if exposed.
+    # Since we can't easily change the full theme dynamically without rerunning with different config,
+    # we'll inject variable overrides for standard elements where CSS vars are used, 
+    # or just colored headers/metrics to simulate the feel.
+    
+    st.markdown(
+        f"""
+        <style>
+        /* Accent color for buttons using primary class */
+        div.stButton > button:first-child {{
+            background-color: {primary_color};
+            color: white;
+            border: none;
+        }}
+        div.stButton > button:first-child:hover {{
+            background-color: {primary_color}DD; /* Slight transparency on hover */
+            color: white;
+            border: none;
+        }}
+        
+        /* Metric Labels/Values */
+        [data-testid="stMetricValue"] {{
+            color: {primary_color};
+        }}
+        
+        /* Sidebar styling override (simulated) */
+        [data-testid="stSidebar"] {{
+            border-right: 3px solid {primary_color};
+        }}
+        
+        /* Headers */
+        h1, h2, h3 {{
+            border-bottom: 2px solid {primary_color}33; /* Faint underline */
+            padding-bottom: 0.3rem;
+        }}
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
 
 # -----------------------------
 # Main
@@ -1602,6 +1707,9 @@ def main_app():
 
     # Sidebar identity
     ctx = sidebar_identity()
+    
+    # Inject Theme
+    inject_theme(ctx.brand)
 
     # Top nav (persona-based)
     st.sidebar.markdown("---")
