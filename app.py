@@ -26,13 +26,15 @@ import plotly.graph_objects as go
 import streamlit as st
 
 
-def set_page(page: str, **kwargs):
+def goto(page: str, **kwargs):
     """
     Updates the current page and any optional deep-link state (e.g., active section).
+    Using 'nav_page' as the canonical state key.
     """
-    st.session_state["page"] = page
+    st.session_state["nav_page"] = page
     for k, v in kwargs.items():
         st.session_state[k] = v
+    st.rerun()
 
 def format_df(df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -1026,28 +1028,28 @@ def persona_landing(ctx: UserContext):
             st.markdown("**Executive Overview**")
             st.caption("Consolidated P&L & Key Metrics")
             if st.button("Go to Financials", key="ql_fin", use_container_width=True):
-                set_page("Financials", active_section_financials="P&L")
+                goto("Financials", active_section_financials="P&L")
     
     with c2:
         with st.container(border=True):
             st.markdown("**Cash & Liquidity**")
             st.caption("Daily Cash Position & Sankey")
             if st.button("View Cash", key="ql_cash", use_container_width=True):
-                set_page("Financials", active_section_financials="Cash & Liquidity")
+                goto("Financials", active_section_financials="Cash & Liquidity")
 
     with c3:
         with st.container(border=True):
             st.markdown("**Dealer Profitability**")
             st.caption("Margin, Service, Warranty Heatmap")
             if st.button("View Dealers", key="ql_dealers", use_container_width=True):
-                set_page("Operations", active_section_operations="Dealer Profitability")
+                goto("Operations", active_section_operations="Dealer Profitability")
 
     with c4:
         with st.container(border=True):
             st.markdown("**Audit Log**")
             st.caption("Governance Trail & History")
             if st.button("View Audit Log", key="ql_audit", use_container_width=True):
-                set_page("Governance", active_section_governance="Audit Trail")
+                goto("Governance", active_section_governance="Audit Trail")
 
     st.markdown("") # Spacer
 
@@ -1058,28 +1060,28 @@ def persona_landing(ctx: UserContext):
             st.markdown("**Inventory Valuation**")
             st.caption("Plant-level Stock Value")
             if st.button("View Inventory", key="ql_inv", use_container_width=True):
-                set_page("Operations", active_section_operations="Inventory Valuation")
+                goto("Operations", active_section_operations="Inventory Valuation")
     
     with c6:
         with st.container(border=True):
             st.markdown("**Intercompany**")
             st.caption("Reconciliation status & breaks")
             if st.button("View Intercompany", key="ql_ic", use_container_width=True):
-                set_page("Financials", active_section_financials="Intercompany")
+                goto("Financials", active_section_financials="Intercompany")
                 
     with c7:
         with st.container(border=True):
             st.markdown("**Ask Finance (NLP)**")
             st.caption("Natural Language Query")
             if st.button("Ask Question", key="ql_nlp", use_container_width=True):
-                set_page("NLP Query")
+                goto("NLP Query")
 
     with c8:
         with st.container(border=True):
             st.markdown("**Simulate Journal**")
             st.caption("Write-back Workflow")
             if st.button("Create Journal", key="ql_journal", use_container_width=True):
-                set_page("Workflows", active_section_workflows="Journal Entry Simulation")
+                goto("Workflows", active_section_workflows="Journal Entry Simulation")
 
     st.markdown("---")
 
@@ -1789,8 +1791,6 @@ def inject_theme(brand: str):
 # -----------------------------
 def main_app():
     init_db()
-    # Ensure seed calling if needed or just let modules do it. 
-    # Original main() just called init_db().
     lake = make_mock_lakehouse()
 
     # Sidebar identity
@@ -1800,64 +1800,87 @@ def main_app():
     inject_theme(ctx.brand)
 
     # -----------------------------
-    # Navigation State & Logic
+    # Canonical Navigation State
     # -----------------------------
-    PAGES = ["Landing", "Financials", "Operations", "AI Insights", "Workflows", "Governance", "NLP Query"]
-    
-    if "page" not in st.session_state:
-        st.session_state["page"] = "Landing"
+    if "nav_page" not in st.session_state:
+        st.session_state["nav_page"] = "Landing"
 
-    # Top Navigation Bar (Redundant & Syncs with Sidebar)
-    # Visual container for top nav
+    PAGES = ["Landing", "Financials", "Operations", "AI Insights", "Workflows", "Governance", "NLP Query"]
+
+    # Callbacks to sync widget state -> canonical state
+    def sync_from_top():
+        st.session_state["nav_page"] = st.session_state["nav_top"]
+
+    def sync_from_side():
+        st.session_state["nav_page"] = st.session_state["nav_side"]
+
+    # -----------------------------
+    # Top Navigation (Primary)
+    # -----------------------------
     with st.container():
-        # Use columns: Logo/Title area | Nav Items | User Profile/Logout
-        # We'll approximate an enterprise header layout
-        tn1, tn2, tn3 = st.columns([2, 5, 1])
+        t1, t2, t3 = st.columns([1.5, 6, 1.5])
         
-        with tn1:
+        with t1:
             st.markdown("### TMHNA Intelligence")
         
-        with tn2:
-            # Horizontal buttons for nav
-            # We use a trick: multiple columns for buttons to make them look like a bar
-            nav_cols = st.columns(len(PAGES))
-            for i, page_name in enumerate(PAGES):
-                # Highlight active page button style if possible, or just standard
-                # Streamlit buttons don't support "active" state styling easily without custom CSS,
-                # but we can rely on the Sidebar/Page content to show where we are.
-                if nav_cols[i].button(page_name, key=f"top_nav_{page_name}", use_container_width=True):
-                    set_page(page_name)
+        with t2:
+            # Horizontal Pill-Style Nav
+            # If current page is not in PAGES (unlikely), default to Landing
+            try:
+                curr_idx = PAGES.index(st.session_state["nav_page"])
+            except ValueError:
+                curr_idx = 0
+            
+            st.radio(
+                "Top Navigation",
+                PAGES,
+                index=curr_idx,
+                key="nav_top",
+                horizontal=True,
+                label_visibility="collapsed",
+                on_change=sync_from_top
+            )
 
-        with tn3:
-            # User profile / Logout
-            # We already have logout in sidebar, adding a small icon/button here
-            if st.button("👤 User", help=f"Signed in as {ctx.actor}"):
-                pass # Just informational
-            # Logout is redundant with sidebar, skipping to avoid clutter/state issues or adding simple one
-            # if st.button("Logout", key="top_logout"):
-            #    st.session_state["authenticated"] = False
-            #    st.rerun()
+        with t3:
+            # User & Logout logic
+            c_user, c_logout = st.columns([2, 1])
+            with c_user:
+                st.write(f"**{ctx.actor}**")
+                st.caption(f"{ctx.role}")
+            with c_logout:
+                if st.button("Logout", key="top_logout"):
+                    st.session_state.clear()
+                    st.rerun()
 
     st.markdown("---")
 
-    # Sidebar Sync: Use 'page' key to bind directly to session state
+    # -----------------------------
+    # Sidebar Navigation (Syncs with Top)
+    # -----------------------------
     st.sidebar.markdown("---")
     st.sidebar.markdown("### Navigation")
     
-    # We use accessibility helper (label_visibility) if needed, but standard is fine
-    # Key="page" ensures bidirectional sync: if top nav updates state['page'], this updates.
-    # If this updates, state['page'] updates.
+    # Sync visual state of sidebar to match canonical page
+    try:
+        side_idx = PAGES.index(st.session_state["nav_page"])
+    except ValueError:
+        side_idx = 0
+
     st.sidebar.radio(
         "Go to",
         PAGES,
-        key="page",
-        label_visibility="collapsed"
+        index=side_idx,
+        key="nav_side",
+        on_change=sync_from_side
     )
+
+    st.sidebar.markdown("---")
+    st.sidebar.caption("PoC note: All data is mock. This app demonstrates the *shape* of the solution, not production integrations.")
 
     # -----------------------------
     # Routing
     # -----------------------------
-    module = st.session_state["page"]
+    module = st.session_state["nav_page"]
 
     if module == "Landing":
         persona_landing(ctx)
@@ -1873,9 +1896,6 @@ def main_app():
         module_governance(lake, ctx)
     elif module == "NLP Query":
         module_nlp(lake, ctx)
-
-    st.sidebar.markdown("---")
-    st.sidebar.caption("PoC note: All data is mock. This app demonstrates the *shape* of the solution, not production integrations.")
 
 
 if __name__ == "__main__":
