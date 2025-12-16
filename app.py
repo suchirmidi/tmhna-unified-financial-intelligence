@@ -2076,3 +2076,32 @@ if __name__ == "__main__":
         login_screen()
     else:
         main_app()
+
+# ==============================================================================
+# SANITY CHECK WALKTHROUGH (For Demo/Verification)
+# ==============================================================================
+# 1. Login
+#    - Use "Executive" role. Verify "Signed in as..." and "Viewing as..." in sidebar.
+#    - Verify "TMHNA (Consolidated)" brand is available.
+#
+# 2. Scope & RLS (Unified)
+#    - Select "TMHNA (Consolidated)".
+#    - Verify Region selector shows "All Regions" and Plant shows "All Plants".
+#    - Select "All Regions". Go to "Operations > Dealer Profitability".
+#    - Verify table shows data across brands/regions (approx double rows vs single brand).
+#
+# 3. Financials & Journals (Simulated)
+#    - Go to "Financials > P&L". View Level: "Region".
+#    - Toggle "Include simulated journals".
+#    - Verify no crash. If journals exist, verify numbers shift slightly.
+#    - Verify Aggregation: Ensure numbers make sense for the Region view.
+#
+# 4. Persistence & Audit
+#    - Go to "Governance > Audit Trail".
+#    - Verify "VIEW" events are deduped (audit_once works).
+#    - Change Role to "Raymond Regional Manager". Check Audit Log again.
+#    - Verify "ASSUME_CONTEXT" event appears.
+#
+# 5. Robustness
+#    - Reload page. Check DB connection (no "ProgrammingError").
+#    - Check "Operations > Fleet VIN P&L" table for nice currency formatting.
