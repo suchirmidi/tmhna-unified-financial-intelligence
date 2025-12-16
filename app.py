@@ -659,6 +659,72 @@ def make_mock_lakehouse() -> Dict[str, pd.DataFrame]:
             )
     balance_sheet = pd.DataFrame(bs_rows)
 
+    # ----------------------------------------------------
+    # Macro & Disruptions Data (New Module)
+    # ----------------------------------------------------
+    dates_macro = pd.date_range(start=dt.date.today() - dt.timedelta(days=365), end=dt.date.today(), freq="ME")
+    macro_rows = []
+    market_rows = []
+    mh_rows = []
+    input_rows = []
+    
+    # Random walk seeds
+    inf = 3.2
+    rate = 5.25
+    pmi = 49.0
+    spy = 420.0
+    xli = 105.0
+    mh_idx = 100.0
+    steel = 100.0
+    diesel = 100.0
+    freight = 100.0
+    
+    for d in dates_macro:
+        # Macro
+        inf += np.random.normal(0, 0.1)
+        rate += np.random.normal(0, 0.05) if np.random.random() > 0.8 else 0 # sticky rates
+        pmi += np.random.normal(0, 0.8)
+        macro_score = max(0, min(100, 50 + (pmi - 50)*2 - (inf - 2)*5))
+        macro_rows.append({"date": d, "inflation_yoy": float(round(inf, 2)), "rate_proxy": float(round(rate, 2)), "pmi_proxy": float(round(pmi, 1)), "macro_score": float(round(macro_score, 1))})
+        
+        # Markets
+        spy *= (1 + np.random.normal(0.005, 0.02))
+        xli *= (1 + np.random.normal(0.004, 0.025))
+        market_rows.append({"date": d, "spy_proxy": float(round(spy, 2)), "xli_proxy": float(round(xli, 2))})
+        
+        # MH Proxy (correlated with XLI)
+        mh_idx *= (1 + np.random.normal(0.004, 0.03))
+        mh_rows.append({"date": d, "mh_index": float(round(mh_idx, 2))})
+        
+        # Inputs (Energy/Materials)
+        steel += np.random.normal(0, 2.0)
+        diesel += np.random.normal(0, 1.5)
+        freight += np.random.normal(0, 3.0)
+        input_rows.append({
+            "date": d, 
+            "steel_index": float(round(steel, 2)), 
+            "copper_index": float(round(steel * 1.2, 2)), # correlated
+            "diesel_index": float(round(diesel, 2)),
+            "freight_index": float(round(freight, 2))
+        })
+
+    # Disruptions (Events)
+    disruption_types = ["Port Congestion", "Weather Event", "Supplier Force Majeure", "Labor Strike", "Cyber Incident"]
+    disruption_rows = []
+    for _ in range(25):
+        r_plant = PLANTS[np.random.randint(0, len(PLANTS))]
+        sev = np.random.randint(1, 6) # 1-5
+        disruption_rows.append({
+            "date": dt.date.today() - dt.timedelta(days=np.random.randint(0, 180)),
+            "region": r_plant[0],
+            "plant": r_plant[1],
+            "disruption_type": np.random.choice(disruption_types),
+            "severity": sev,
+            "estimated_days": sev * np.random.randint(1, 5),
+            "affected_material": np.random.choice(["Steel", "Semiconductors", "Hydraulics", "Rubber", "Packaging"]),
+            "notes": "Simulated operational disruption event."
+        })
+
     return {
         # "Sources"
         "source_gl_tx": gl_tx,
@@ -673,6 +739,12 @@ def make_mock_lakehouse() -> Dict[str, pd.DataFrame]:
         # "Gold / curated"
         "gold_pl": gold_pl,
         "gold_balance_sheet": balance_sheet,
+        # "Macro Module"
+        "macro_signals": pd.DataFrame(macro_rows),
+        "market_proxies": pd.DataFrame(market_rows),
+        "mh_market_proxy": pd.DataFrame(mh_rows),
+        "input_costs": pd.DataFrame(input_rows),
+        "disruptions": pd.DataFrame(disruption_rows).sort_values("date", ascending=False),
     }
 
 
@@ -1562,6 +1634,277 @@ def module_ai(lake: Dict[str, pd.DataFrame], ctx: UserContext):
         audit_once("ai_pred_maint", "VIEW", "AI_PRED_MAINT_REVENUE", details={"rows": int(len(pred))})
 
 
+
+def module_macro(lake: Dict[str, pd.DataFrame], ctx: UserContext):
+    st.header("Macro & Disruptions — External Signals for Cash + Resource Allocation")
+    st.caption("Financial intelligence optimizes cash flow and resource allocation by balancing immediate liquidity needs with long-term investment. This view surfaces external signals that drive working capital pressure, margin volatility, and operational risk.")
+
+    if not require_mfa(ctx):
+        return
+
+    macro = lake["macro_signals"]
+    market = lake["market_proxies"]
+    mh = lake["mh_market_proxy"]
+    inputs = lake["input_costs"]
+    disruptions = lake["disruptions"]
+
+    # -----------------------------
+    # Controls / Context
+    # -----------------------------
+    top_c = st.columns([1.5, 3.0, 1.5])
+    with top_c[0]:
+        timeframe_days = st.selectbox("Timeframe", [30, 90, 180, 365], index=1)
+    
+    # Scope context (respecting ctx)
+    # If ctx has specific region/plant, we show it disabled. If "All", we allow drill down.
+    with top_c[1]:
+        # Just display current scope context for clarity as per requirements
+        st.info(f"**Scope Context:** Brand={ctx.brand} • Region={ctx.region} • Plant={ctx.plant}")
+    
+    # Filter data by timeframe
+    start_date = pd.to_datetime(dt.date.today() - dt.timedelta(days=timeframe_days))
+    macro = macro[macro["date"] >= start_date].sort_values("date")
+    market = market[market["date"] >= start_date].sort_values("date")
+    mh = mh[mh["date"] >= start_date].sort_values("date")
+    inputs = inputs[inputs["date"] >= start_date].sort_values("date")
+    disruptions = disruptions[disruptions["date"] >= start_date.date()].sort_values("date", ascending=False) # date is object/date in disruptions
+
+    st.markdown("---")
+
+    # -----------------------------
+    # KPI Row
+    # -----------------------------
+    # Latest values
+    latest_macro = macro.iloc[-1]
+    latest_market = market.iloc[-1]
+    latest_mh = mh.iloc[-1]
+    latest_input = inputs.iloc[-1]
+    
+    # Previous values (start of selected timeframe)
+    start_market = market.iloc[0]
+    start_mh = mh.iloc[0]
+    start_input = inputs.iloc[0]
+
+    k1, k2, k3, k4, k5, k6 = st.columns(6)
+    
+    # 1. Macro Health Score
+    k1.metric("Macro Health", f"{latest_macro['macro_score']:.0f}/100", delta=f"{latest_macro['macro_score'] - macro.iloc[0]['macro_score']:.1f}")
+    
+    # 2. Inflation
+    k2.metric("Inflation (YoY)", f"{latest_macro['inflation_yoy']:.1f}%", delta=f"{latest_macro['inflation_yoy'] - macro.iloc[0]['inflation_yoy']:.1f}%", delta_color="inverse")
+
+    # 3. Rate Env
+    rate_desc = "High" if latest_macro["rate_proxy"] > 4.5 else "Normal" if latest_macro["rate_proxy"] > 2.0 else "Low"
+    k3.metric("Rate Env", rate_desc, f"{latest_macro['rate_proxy']:.2f}%")
+
+    # 4. Market Trend (SPY)
+    spy_ret = (latest_market["spy_proxy"] / start_market["spy_proxy"]) - 1
+    k4.metric("Market (SPY)", f"${latest_market['spy_proxy']:.0f}", f"{spy_ret:.1%}")
+
+    # 5. MH Proxy
+    mh_ret = (latest_mh["mh_index"] / start_mh["mh_index"]) - 1
+    k5.metric("MH Sector", f"{latest_mh['mh_index']:.1f}", f"{mh_ret:.1%}")
+
+    # 6. Input Pressure
+    # Simple composite of commodities change
+    input_start_comp = start_input["steel_index"] + start_input["diesel_index"] + start_input["freight_index"]
+    input_end_comp = latest_input["steel_index"] + latest_input["diesel_index"] + latest_input["freight_index"]
+    input_press = (input_end_comp / input_start_comp) - 1
+    k6.metric("Input Pressure", f"{input_end_comp/3:.0f} avg", f"{input_press:.1%}", delta_color="inverse")
+
+    st.markdown("---")
+
+    # -----------------------------
+    # C) Trends: Economy vs Markets vs Material Handling
+    # -----------------------------
+    st.subheader("Market Intelligence Trends")
+    t1, t2, t3 = st.columns(3)
+    
+    with t1:
+        st.markdown("**Economy (Macro)**")
+        fig_macro = go.Figure()
+        fig_macro.add_trace(go.Scatter(x=macro["date"], y=macro["macro_score"], name="Macro Score"))
+        fig_macro.add_trace(go.Scatter(x=macro["date"], y=macro["pmi_proxy"], name="PMI", yaxis="y2"))
+        fig_macro.update_layout(height=300, legend=dict(orientation="h", y=-0.2), 
+                                yaxis=dict(title="Score"),
+                                yaxis2=dict(title="PMI", overlaying="y", side="right"))
+        st.plotly_chart(fig_macro, use_container_width=True)
+
+    with t2:
+        st.markdown("**Markets (Equity)**")
+        fig_mkt = go.Figure()
+        fig_mkt.add_trace(go.Scatter(x=market["date"], y=market["spy_proxy"], name="SPY"))
+        fig_mkt.add_trace(go.Scatter(x=market["date"], y=market["xli_proxy"], name="XLI"))
+        fig_mkt.update_layout(height=300, legend=dict(orientation="h", y=-0.2))
+        st.plotly_chart(fig_mkt, use_container_width=True)
+
+    with t3:
+        st.markdown("**Material Handling (Peer Group)**")
+        fig_mh = go.Figure()
+        fig_mh.add_trace(go.Scatter(x=mh["date"], y=mh["mh_index"], name="MH Index"))
+        fig_mh.update_layout(height=300, legend=dict(orientation="h", y=-0.2))
+        st.plotly_chart(fig_mh, use_container_width=True)
+
+    st.markdown("---")
+
+    # -----------------------------
+    # D) Input Costs Tracker
+    # -----------------------------
+    st.subheader("Supply Chain & Input Costs")
+    ic1, ic2 = st.columns([2, 1])
+    
+    with ic1:
+        st.markdown("##### Commodity Price Indices (Base=100)")
+        fig_ic = px.line(inputs, x="date", y=["steel_index", "copper_index", "diesel_index", "freight_index"])
+        fig_ic.update_layout(height=350, legend_title="Commodity")
+        st.plotly_chart(fig_ic, use_container_width=True)
+        
+        # Export Option
+        perms = ROLE_PERMS.get(ctx.role, {})
+        if perms.get("can_export", False):
+            # Mock Excel export
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+                inputs.to_excel(writer, sheet_name="Input_Costs")
+            st.download_button("Export Cost Data", data=output.getvalue(), file_name="input_costs.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", on_click=lambda: audit("EXPORT", "EXCEL", "MACRO_INPUTS"), type="primary")
+
+    with ic2:
+        st.markdown("##### Input Cost Watchlist")
+        watch_metric = st.selectbox("Metric", ["Steel Index", "Diesel Index", "Freight Index", "Copper Index"])
+        watch_thresh = st.number_input("Alert Threshold", value=110.0, step=1.0)
+        if st.button("Set Price Alert"):
+             con = db()
+             con.execute(
+                "INSERT INTO alerts(ts,actor,role,metric,threshold,comparator,scope,scope_key) VALUES(?,?,?,?,?,?,?,?)",
+                (
+                    dt.datetime.now().isoformat(timespec="seconds"),
+                    st.session_state.get("login_user", "Unknown"),
+                    st.session_state.get("role", "Unknown"),
+                    watch_metric,
+                    float(watch_thresh),
+                    ">",
+                    "Global",
+                    "Macro",
+                ),
+             )
+             con.commit()
+             audit("SAVE_ALERT", "MACRO_WATCHLIST", details={"metric": watch_metric, "threshold": watch_thresh})
+             st.success(f"Alert set for {watch_metric} > {watch_thresh}")
+
+        # Cost Mix donut
+        st.markdown("##### Cost Driver Mix (COGS)")
+        mix = pd.DataFrame([{"Input": "Steel/Metals", "Share": 0.35}, {"Input": "Labor", "Share": 0.25}, {"Input": "Electronics", "Share": 0.15}, {"Input": "Freight/Logistics", "Share": 0.12}, {"Input": "Energy", "Share": 0.08}, {"Input": "Other", "Share": 0.05}])
+        fig_mix = px.pie(mix, values="Share", names="Input", hole=0.4)
+        fig_mix.update_layout(height=250, margin=dict(t=0, b=0, l=0, r=0))
+        st.plotly_chart(fig_mix, use_container_width=True)
+
+    st.markdown("---")
+
+
+    # -----------------------------
+    # E) Disruption Radar
+    # -----------------------------
+    st.subheader("Operational Disruption Radar")
+    d1, d2 = st.columns([1.5, 1.0])
+    
+    with d1:
+        st.markdown("**Disruption Heatmap (Region x Type)**")
+        # Pivot for heatmap
+        if not disruptions.empty:
+            hm = disruptions.groupby(["region", "disruption_type"])["severity"].mean().reset_index()
+            fig_hm = px.density_heatmap(hm, x="region", y="disruption_type", z="severity", color_continuous_scale="Reds", nbinsx=len(REGIONS), nbinsy=5)
+            fig_hm.update_layout(height=350)
+            st.plotly_chart(fig_hm, use_container_width=True)
+            
+            st.markdown("**Event Timeline**")
+            fig_tl = px.scatter(disruptions, x="date", y="severity", color="disruption_type", size="estimated_days", hover_data=["region", "plant", "affected_material", "notes"])
+            fig_tl.update_layout(height=300)
+            st.plotly_chart(fig_tl, use_container_width=True)
+        else:
+            st.info("No disruptions in this timeframe.")
+
+    with d2:
+        st.markdown("**At-Risk Plants (Severity Weighted)**")
+        if not disruptions.empty:
+            risk = disruptions.groupby(["plant", "region"], as_index=False)["severity"].sum().sort_values("severity", ascending=False)
+            risk["Risk Score"] = risk["severity"] * 10 # heuristic
+            
+            # Simple predictive heuristic
+            risk["30-Day Outlook"] = risk["Risk Score"].apply(lambda x: "High" if x > 30 else "Medium" if x > 15 else "Low")
+            
+            st.dataframe(risk[["plant", "region", "Risk Score", "30-Day Outlook"]].head(10), use_container_width=True, hide_index=True)
+        else:
+            st.info("No risk data.")
+
+    st.markdown("---")
+
+    # -----------------------------
+    # F) Scenario Simulator
+    # -----------------------------
+    st.subheader("Financial Intelligence: Scenario Simulator")
+    st.caption("Assess impact of external shocks on P&L and Liquidity. 'Run Scenario' logs the assumption set for governance.")
+    
+    # Sliders
+    sim_c1, sim_c2, sim_c3 = st.columns([1, 1, 2])
+    
+    with sim_c1:
+        st.markdown("**Input Shocks**")
+        s_steel = st.slider("Steel Price", -20, 30, 0, 5, format="%d%%")
+        s_diesel = st.slider("Diesel/Energy", -20, 40, 0, 5, format="%d%%")
+        s_freight = st.slider("Freight Rates", -30, 50, 0, 5, format="%d%%")
+        
+    with sim_c2:
+        st.markdown("**Operational Shocks**")
+        s_disrupt = st.slider("Disruption Severity Multiplier", 0.8, 1.5, 1.0, 0.1)
+        
+        if st.button("RUN SCENARIO", type="primary"):
+            # Mock calculation
+            # Weights: Steel 35%, Diesel 8%, Freight 12%
+            w_steel = 0.35
+            w_diesel = 0.08
+            w_freight = 0.12
+            
+            weighted_cost_increase = (s_steel/100 * w_steel) + (s_diesel/100 * w_diesel) + (s_freight/100 * w_freight)
+            # Disruption adds inefficiency cost
+            inefficiency = (s_disrupt - 1.0) * 0.02
+            
+            total_margin_hit = weighted_cost_increase + inefficiency
+            
+            # Impacts
+            gm_impact_bps = int(total_margin_hit * 10000)
+            cash_impact = total_margin_hit * 50_000_000 # assume 50M base monthly COGS
+            
+            st.session_state["sim_results"] = {
+                "gm_bps": gm_impact_bps,
+                "cash": cash_impact,
+                "wc_stress": "High" if cash_impact > 2_000_000 else "Medium" if cash_impact > 500_000 else "Low"
+            }
+            
+            # Audit
+            audit("RUN_SCENARIO", "MACRO_SIM", details={"steel": s_steel, "diesel": s_diesel, "freight": s_freight, "disrupt": s_disrupt})
+
+    with sim_c3:
+        st.markdown("**Projected Impact (Monthly)**")
+        res = st.session_state.get("sim_results", {"gm_bps": 0, "cash": 0, "wc_stress": "Low"})
+        
+        r1, r2, r3 = st.columns(3)
+        r1.metric("Est. GM Impact", f"{res['gm_bps']} bps", delta=f"{-res['gm_bps']}", delta_color="inverse")
+        r2.metric("Cash Hit (USD)", f"${res['cash']/1_000_000:.1f}M", delta=f"{-res['cash']/1_000_000:.1f}M", delta_color="inverse")
+        r3.metric("WC Stress Level", res["wc_stress"], delta="Normal" if res["wc_stress"]=="Low" else "Alert", delta_color="inverse")
+        
+        st.markdown("**Recommended Actions:**")
+        recs = []
+        if s_steel > 10: recs.append("- Hedge steel contracts or trigger price escalation clauses.")
+        if s_freight > 15: recs.append("- Consolidate shipments and re-evaluate logistics carriers.")
+        if s_disrupt > 1.2: recs.append("- Increase safety stock in unaffected regions.")
+        if res["cash"] > 1_000_000: recs.append("- Tighten AR collections; extend AP terms where possible.")
+        if not recs: recs.append("- Monitor signals; maintain standard hedging.")
+        
+        for r in recs:
+            st.write(r)
+
+    st.markdown("---")
+
 def module_workflows(lake: Dict[str, pd.DataFrame], ctx: UserContext):
     st.header("Actionable Workflows (CRUD / Write-Back — simulated)")
     st.caption("Journal entry simulation, stewardship queue (human-in-the-loop), commentary & annotation.")
@@ -2001,7 +2344,7 @@ def main_app():
     # -----------------------------
     # Canonical Navigation State & Logic
     # -----------------------------
-    PAGES = ["Landing", "Financials", "Operations", "AI Insights", "Workflows", "Governance", "NLP Query"]
+    PAGES = ["Landing", "Financials", "Macro & Disruptions", "Operations", "AI Insights", "Workflows", "Governance", "NLP Query"]
 
     if "nav_page" not in st.session_state:
         st.session_state["nav_page"] = "Landing"
@@ -2083,6 +2426,8 @@ def main_app():
         persona_landing(ctx)
     elif module == "Financials":
         module_financials(lake, ctx)
+    elif module == "Macro & Disruptions":
+        module_macro(lake, ctx)
     elif module == "Operations":
         module_operations(lake, ctx)
     elif module == "AI Insights":
