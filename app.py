@@ -37,6 +37,7 @@ def format_df(df: pd.DataFrame) -> pd.DataFrame:
     Standardizes dataframe for display:
     - Capitalizes headers (underscore -> space)
     - Formats floats as strings with separators (money/%)
+    - Coerces object columns to numeric if valid
     """
     out = df.copy()
     
@@ -45,17 +46,26 @@ def format_df(df: pd.DataFrame) -> pd.DataFrame:
     
     # 2. Value formatting (heuristic)
     for col in out.columns:
-        # Check if float
-        if pd.api.types.is_float_dtype(out[col]):
+        # Attempt coercion if object
+        if out[col].dtype == "object":
+            try:
+                coerced = pd.to_numeric(out[col], errors="coerce")
+                if coerced.notna().mean() >= 0.9:
+                    out[col] = coerced
+            except Exception:
+                pass
+
+        # Check if float (or now coerced to float/int)
+        if pd.api.types.is_numeric_dtype(out[col]):
             # If column name suggests money
-            if "USD" in col or "Amount" in col or "Profit" in col or "Cost" in col or "Price" in col:
-                out[col] = out[col].apply(lambda x: f"${x:,.2f}")
+            if any(x in col for x in ["USD", "Amount", "Profit", "Cost", "Price", "Revenue", "Cash", "Assets", "Liabilities", "Equity", "Debt", "AP", "AR", "Inventory"]):
+                out[col] = out[col].apply(lambda x: f"${x:,.2f}" if pd.notnull(x) and not str(x).startswith("$") else x)
             # If column name suggests percentage
-            elif "%" in col or "Margin" in col or "Rate" in col or "Ratio" in col:
-                out[col] = out[col].apply(lambda x: f"{x:.1%}")
+            elif any(x in col for x in ["%", "Margin", "Rate", "Ratio"]):
+                out[col] = out[col].apply(lambda x: f"{x:.1%}" if pd.notnull(x) and not str(x).endswith("%") else x)
             # General number
             else:
-                 out[col] = out[col].apply(lambda x: f"{x:,.2f}")
+                 out[col] = out[col].apply(lambda x: f"{x:,.2f}" if pd.notnull(x) else "")
                  
     return out
 
@@ -128,10 +138,15 @@ TZ = "America/Indiana/Indianapolis"
 DB_PATH = os.path.join(os.path.dirname(__file__), "tmhna_poc.db")
 
 
-def db() -> sqlite3.Connection:
+@st.cache_resource(show_spinner=False)
+def get_db_connection() -> sqlite3.Connection:
     con = sqlite3.connect(DB_PATH, check_same_thread=False)
     con.execute("PRAGMA journal_mode=WAL;")
     return con
+
+
+def db() -> sqlite3.Connection:
+    return get_db_connection()
 
 
 def init_db() -> None:
@@ -231,6 +246,24 @@ def audit(action: str, object_type: str, object_id: Optional[str] = None, detail
     )
     con.commit()
     con.close()
+
+
+def audit_once(key: str, action: str, object_type: str, object_id: Optional[str] = None, details: Optional[dict] = None) -> None:
+    """
+    Dedupes audit events based on context hash.
+    Only logs if signature (details+action) differs from last for this key.
+    """
+    sig_str = f"{action}|{object_type}|{object_id}|{json.dumps(details or {}, sort_keys=True)}"
+    h = hashlib.sha1(sig_str.encode("utf-8")).hexdigest()
+    
+    # Store in session state: dict of key -> hash
+    if "audit_dedupe" not in st.session_state:
+        st.session_state["audit_dedupe"] = {}
+        
+    last_hash = st.session_state["audit_dedupe"].get(key)
+    if h != last_hash:
+        st.session_state["audit_dedupe"][key] = h
+        audit(action, object_type, object_id, details)
 
 
 def seed_stewardship_if_empty() -> None:
@@ -661,12 +694,16 @@ def rls_filter(df: pd.DataFrame, ctx: UserContext) -> pd.DataFrame:
         out = out[out["brand"] == ctx.brand]
 
     if "region" in out.columns:
-        if ctx.region in REGIONS:
+        if ctx.region == "All Regions":
+            pass
+        elif ctx.region in REGIONS:
              out = out[out["region"] == ctx.region]
     
     if "plant" in out.columns:
          # Filter by plant if selected and valid
-        if ctx.plant in [p[1] for p in PLANTS]: 
+        if ctx.plant == "All Plants":
+            pass
+        elif ctx.plant in [p[1] for p in PLANTS]: 
              out = out[out["plant"] == ctx.plant]
         
     return out
@@ -851,9 +888,10 @@ def compute_kpis(pl_df: pd.DataFrame) -> Dict[str, float]:
     return {"Revenue": rev, "Gross Profit": gp, "Gross Margin %": gm, "EBITDA (mock)": ebitda}
 
 
-def add_simulated_journal_to_pl(pl_df: pd.DataFrame, ctx: UserContext) -> pd.DataFrame:
+def add_simulated_journal_to_pl(pl_df: pd.DataFrame, ctx: UserContext, group_cols: List[str]) -> pd.DataFrame:
     """
-    Pull any simulated journals (posted=0) and overlay for simulation.
+    Pull any simulated journals (posted=0) and overlay.
+    Must group by the SAME structure as the P&L view to align.
     """
     con = db()
     j = pd.read_sql_query(
@@ -868,15 +906,21 @@ def add_simulated_journal_to_pl(pl_df: pd.DataFrame, ctx: UserContext) -> pd.Dat
     acct_map = {a: n for a, n in GL_ACCOUNTS}
     j["gl_name"] = j["account"].map(acct_map).fillna("SG&A Other")
     j["posting_month"] = pl_df["posting_month"].max()
+    
+    # Ensure dimensions exist for grouping (fill from context or defaults if needed)
+    # The simple approach: if user is enterprise, all rows collapse. If brand, group by brand.
+    # But the journals have specific brand/region/plant.
     # overlay only if journal is within user's visible scope
     j = rls_filter(j.rename(columns={"account": "gl_account"}), ctx)
     if j.empty:
         return pl_df
 
-    overlay = j.groupby(["posting_month", "gl_name"], as_index=False)["amount"].sum().rename(columns={"amount": "amount_usd"})
+    overlay = j.groupby(group_cols, as_index=False)["amount"].sum().rename(columns={"amount": "amount_usd"})
+    
     # merge by adding amounts
     out = pl_df.copy()
-    out = out.merge(overlay, on=["posting_month", "gl_name"], how="left", suffixes=("", "_sim"))
+    # Merge on all group cols
+    out = out.merge(overlay, on=group_cols, how="left", suffixes=("", "_sim"))
     out["amount_usd"] = out["amount_usd"] + out["amount_usd_sim"].fillna(0.0)
     out = out.drop(columns=["amount_usd_sim"])
     return out
@@ -985,32 +1029,85 @@ def sidebar_identity() -> UserContext:
         st.warning(f"Role '{role}' cannot view Consolidated scope. Reverting to {u[2]}.")
         brand = u[2]
 
-    region = st.sidebar.selectbox("Region", REGIONS, index=REGIONS.index(u[3]) if u[3] in REGIONS else 0)
-    plants_in_region = [p for r, p in PLANTS if r == region]
-    # For safety/simplicity, if list is empty (e.g. Canada?), handle gracefully or assume logic holds.
-    # The constants have plants for all regions in mock data.
-    
-    # If TMHNA is selected, maybe we want 'All Plants'? 
-    # The prompt says: "Update RLS logic so Executive/Auditor with TMHNA selection sees both brands, but other RLS dimensions (region/plant) still apply if the role requires them."
-    # We will stick to the standard selectors for Region/Plant for now, 
-    # effectively showing "TMHNA (all brands) in Region X".
-    
-    plant_idx = 0
-    if u[4] in plants_in_region:
-        plant_idx = plants_in_region.index(u[4])
-    elif plants_in_region:
-        plant_idx = 0
+    # Region Selector
+    available_regions = list(REGIONS)
+    # Add "All Regions" for Consolidated Exec/Auditors
+    if brand == "TMHNA (Consolidated)" and role in ["Executive", "Auditor"]:
+        available_regions.insert(0, "All Regions")
         
-    plant = st.sidebar.selectbox("Plant", plants_in_region, index=plant_idx)
+    # Revert region if invalid for current role/brand state
+    current_region = st.session_state.get("ctx_region", u[3]) # fallback
+    if current_region not in available_regions:
+        current_region = u[3] if u[3] in available_regions else available_regions[0]
+
+    region_idx = 0
+    if current_region in available_regions:
+        region_idx = available_regions.index(current_region)
+        
+    region = st.sidebar.selectbox("Region", available_regions, index=region_idx, key="ctx_region")
+    
+    # Plant Selector
+    plants_in_region = [p for r, p in PLANTS if r == region]
+    # If "All Regions", maybe show all plants? Or just allow "All Plants"?
+    # Requirement: "Plant selectbox should include 'All Plants' as the first option"
+    # Logic: If 'All Regions' selected, plants_in_region is empty by list comp above. 
+    # Let's populate it with ALL plants if All Regions.
+    if region == "All Regions":
+         plants_in_region = [p for _, p in PLANTS]
+    
+    # Add "All Plants" option
+    if brand == "TMHNA (Consolidated)" and role in ["Executive", "Auditor"]:
+        plants_in_region.insert(0, "All Plants")
+
+    # Default plant logic
+    default_plant = u[4]
+    # If Region is All, Plant defaults to All
+    if region == "All Regions" and "All Plants" in plants_in_region:
+        default_plant = "All Plants"
+        
+    plant_idx = 0
+    # Try to keep current selection if valid
+    current_plant_val = st.session_state.get("ctx_plant_val", default_plant)
+    
+    # If we just switched to All Regions, force All Plants if available
+    if region == "All Regions" and "All Plants" in plants_in_region:
+         current_plant_val = "All Plants"
+
+    if current_plant_val in plants_in_region:
+        plant_idx = plants_in_region.index(current_plant_val)
+    elif len(plants_in_region) > 0:
+        plant_idx = 0
+    
+    plant = st.sidebar.selectbox("Plant", plants_in_region, index=plant_idx, key="ctx_plant_val")
 
     st.sidebar.markdown("---")
     off_network = st.sidebar.toggle("Off-network access (simulate)", value=False)
     mfa_ok = st.sidebar.checkbox("MFA verified (simulate)", value=not off_network)
     st.sidebar.caption("Conditional Access: off-network requires MFA.")
 
-    # Audit the scope change if it changes? (Optional, but good for tracking)
-    # For now, just return context.
+    # Audit the scope change if it changes
+    # "ASSUME_CONTEXT" audit
+    current_context = (actor, role, brand, region, plant)
+    last_context = st.session_state.get("last_context")
     
+    if last_context is None:
+        st.session_state["last_context"] = current_context
+    elif current_context != last_context:
+        # Context changed
+        audit("ASSUME_CONTEXT", "IDENTITY", details={
+            "login_user": st.session_state.get("login_user"),
+            "actor": actor,
+            "role": role,
+            "brand": brand,
+            "region": region,
+            "plant": plant
+        })
+        st.session_state["last_context"] = current_context
+
+    # Visual cue
+    st.sidebar.caption(f"Signed in as: **{st.session_state.get('login_user')}**")
+    st.sidebar.caption(f"Viewing as: **{actor}**")
+
     ctx = UserContext(actor=actor, role=role, brand=brand, region=region, plant=plant, off_network=off_network, mfa_ok=mfa_ok)
     st.session_state["actor"] = actor
     st.session_state["role"] = role
@@ -1139,9 +1236,29 @@ def module_financials(lake: Dict[str, pd.DataFrame], ctx: UserContext):
             fx_val = 0.74
         pl_view = compute_pl_view(gold_pl, ctx, level=level, fx_cadusd=fx_val)
 
+    # level determines aggregation granularity
+    group_cols = ["posting_month", "gl_name"]
+    if level == "Enterprise":
+        pass
+    elif level == "Brand":
+        group_cols = ["posting_month", "brand", "gl_name"]
+    elif level == "Region":
+        group_cols = ["posting_month", "brand", "region", "gl_name"]
+    elif level == "Plant":
+        group_cols = ["posting_month", "brand", "region", "plant", "gl_name"]
+
+    # 1. P&L
+    if section == "P&L":
+        # compute view
+        try:
+            fx_val = float(fx)
+        except ValueError:
+            fx_val = 0.74
+        pl_view = compute_pl_view(gold_pl, ctx, level=level, fx_cadusd=fx_val)
+
         # overlay simulated journals
         if show_sim:
-            pl_view_sim = add_simulated_journal_to_pl(pl_view.rename(columns={"amount_usd": "amount_usd"}), ctx)
+            pl_view_sim = add_simulated_journal_to_pl(pl_view.rename(columns={"amount_usd": "amount_usd"}), ctx, group_cols)
         else:
             pl_view_sim = pl_view
 
@@ -1162,7 +1279,7 @@ def module_financials(lake: Dict[str, pd.DataFrame], ctx: UserContext):
         fig = px.line(pivot, x="posting_month", y="amount_usd", color="gl_name", markers=False)
         fig.update_layout(height=380, legend_title_text="P&L Line")
         st.plotly_chart(fig, use_container_width=True)
-        audit("VIEW", "FINANCIALS_PNL", details={"level": level, "include_simulated": bool(show_sim)})
+        audit_once("fin_pnl", "VIEW", "FINANCIALS_PNL", details={"level": level, "include_simulated": bool(show_sim)})
 
     # 2. Balance Sheet
     elif section == "Balance Sheet":
@@ -1191,7 +1308,7 @@ def module_financials(lake: Dict[str, pd.DataFrame], ctx: UserContext):
             st.plotly_chart(fig2, use_container_width=True)
             st.caption("Ratios (mock): Debt/Equity and Current Ratio computed from snapshot fields.")
         
-        audit("VIEW", "FINANCIALS_BALANCE_SHEET", details={"asof_month": str(latest.date()) if hasattr(latest, "date") else str(latest)})
+        audit_once("fin_bs", "VIEW", "FINANCIALS_BALANCE_SHEET", details={"asof_month": str(latest.date()) if hasattr(latest, "date") else str(latest)})
 
     # 3. Cash & Liquidity
     elif section == "Cash & Liquidity":
@@ -1222,7 +1339,7 @@ def module_financials(lake: Dict[str, pd.DataFrame], ctx: UserContext):
             st.plotly_chart(sankey, use_container_width=True)
             st.caption("Sankey visualizes Source → Use over the selected window (mock).")
 
-        audit("VIEW", "FINANCIALS_CASH", details={"window_days": int(window)})
+        audit_once("fin_cash", "VIEW", "FINANCIALS_CASH", details={"window_days": int(window)})
 
         # AP/AR aging
         st.markdown("#### AP/AR Aging (summary)")
@@ -1264,7 +1381,7 @@ def module_financials(lake: Dict[str, pd.DataFrame], ctx: UserContext):
 
         st.dataframe(format_df(ic.head(25)), use_container_width=True, hide_index=True)
 
-        audit("VIEW", "FINANCIALS_INTERCOMPANY", details={"rows": int(len(ic))})
+        audit_once("fin_ic", "VIEW", "FINANCIALS_INTERCOMPANY", details={"rows": int(len(ic))})
 
     # 5. Trace to Source
     elif section == "Trace to Source":
@@ -1283,7 +1400,7 @@ def module_financials(lake: Dict[str, pd.DataFrame], ctx: UserContext):
         st.caption("Click a document number below to simulate lineage (doc → source system → transaction).")
         st.dataframe(format_df(tx_f[["source_system", "doc_no", "brand", "region", "plant", "gl_name", "amount", "currency", "vendor_raw", "cost_center", "memo"]].head(50)),
                      use_container_width=True, hide_index=True)
-        audit("TRACE_TO_SOURCE", "GL_TRANSACTION", details={"gl_name": line, "month": str(month)})
+        audit_once("fin_trace", "TRACE_TO_SOURCE", "GL_TRANSACTION", details={"gl_name": line, "month": str(month)})
 
 
 def module_operations(lake: Dict[str, pd.DataFrame], ctx: UserContext):
@@ -1330,7 +1447,7 @@ def module_operations(lake: Dict[str, pd.DataFrame], ctx: UserContext):
 
         st.markdown("##### Dealer Network Performance")
         st.dataframe(format_df(df.sort_values("profit_usd", ascending=False)), use_container_width=True, hide_index=True)
-        audit("VIEW", "OPERATIONS_DEALERS")
+        audit_once("ops_dealers", "VIEW", "OPERATIONS_DEALERS")
 
     elif section == "Fleet VIN P&L":
         df = fleet.copy()
@@ -1343,7 +1460,7 @@ def module_operations(lake: Dict[str, pd.DataFrame], ctx: UserContext):
             fig = px.scatter(df, x="usage_hours", y="vin_pnl_usd", size="battery_cycles", hover_name="vin")
             fig.update_layout(height=380, xaxis_title="Usage hours (telematics)", yaxis_title="VIN P&L (USD)")
             st.plotly_chart(fig, use_container_width=True)
-        audit("VIEW", "OPERATIONS_FLEET")
+        audit_once("ops_fleet", "VIEW", "OPERATIONS_FLEET")
 
     elif section == "Spend Analytics":
         st.markdown("##### Duplicate Vendor Families (AI-normalized)")
@@ -1363,7 +1480,7 @@ def module_operations(lake: Dict[str, pd.DataFrame], ctx: UserContext):
 
         st.markdown("##### Raw Vendor List (Potential Duplicates)")
         st.dataframe(format_df(df.sample(30, random_state=7)), use_container_width=True, hide_index=True)
-        audit("VIEW", "OPERATIONS_SPEND")
+        audit_once("ops_spend", "VIEW", "OPERATIONS_SPEND")
 
     elif section == "Inventory Valuation":
         st.markdown("##### Inventory valuation across plants (real-time — mock)")
@@ -1374,7 +1491,7 @@ def module_operations(lake: Dict[str, pd.DataFrame], ctx: UserContext):
         st.plotly_chart(fig, use_container_width=True)
 
         st.dataframe(format_df(df.sort_values("inventory_value_usd", ascending=False)), use_container_width=True, hide_index=True)
-        audit("VIEW", "OPERATIONS_INVENTORY")
+        audit_once("ops_inv", "VIEW", "OPERATIONS_INVENTORY")
 
 
 def module_ai(lake: Dict[str, pd.DataFrame], ctx: UserContext):
@@ -1406,7 +1523,7 @@ def module_ai(lake: Dict[str, pd.DataFrame], ctx: UserContext):
         fig = px.line(fc, x="date", y="cash_forecast_usd")
         fig.update_layout(height=360, yaxis_title="USD")
         st.plotly_chart(fig, use_container_width=True)
-        audit("VIEW", "AI_CASH_FORECAST", details={"days_forward": int(days)})
+        audit_once("ai_cash", "VIEW", "AI_CASH_FORECAST", details={"days_forward": int(days)})
 
     elif section == "Anomaly Detection":
         st.markdown("##### GL anomaly alerts (z-score)")
@@ -1414,14 +1531,14 @@ def module_ai(lake: Dict[str, pd.DataFrame], ctx: UserContext):
         out = anomaly_detection(gl_tx, ctx, z_thresh=float(z))
         st.dataframe(out, use_container_width=True, hide_index=True)
         st.caption("Example alert: 'Unusual expense category for this cost center' (mock).")
-        audit("VIEW", "AI_ANOMALY_DETECTION", details={"z_threshold": float(z), "rows": int(len(out))})
+        audit_once("ai_anomaly", "VIEW", "AI_ANOMALY_DETECTION", details={"z_threshold": float(z), "rows": int(len(out))})
 
     elif section == "Predictive Maintenance Revenue":
         st.markdown("##### Service revenue forecast driven by iWAREHOUSE/MyInsights-like telematics (mock)")
         pred = predictive_maintenance_revenue(tele, fleet)
         pred = rls_filter(pred, ctx)
         st.dataframe(pred, use_container_width=True, hide_index=True)
-        audit("VIEW", "AI_PRED_MAINT_REVENUE", details={"rows": int(len(pred))})
+        audit_once("ai_pred_maint", "VIEW", "AI_PRED_MAINT_REVENUE", details={"rows": int(len(pred))})
 
 
 def module_workflows(lake: Dict[str, pd.DataFrame], ctx: UserContext):
@@ -1608,7 +1725,7 @@ def module_governance(lake: Dict[str, pd.DataFrame], ctx: UserContext):
             st.markdown("**Governed Data (Post-Policy)**")
             tx2 = mask_sensitive(rls_filter(tx, ctx), ctx)
             st.dataframe(format_df(tx2[["source_system", "doc_no", "brand", "region", "plant", "gl_name", "amount", "vendor_raw", "cost_center", "memo"]]), use_container_width=True, hide_index=True)
-        audit("VIEW", "GOV_ACCESS_CONTROLS")
+        audit_once("gov_access", "VIEW", "GOV_ACCESS_CONTROLS")
 
     elif section == "Audit Trail":
         st.markdown("##### Immutable audit log (simulated)")
@@ -1620,7 +1737,7 @@ def module_governance(lake: Dict[str, pd.DataFrame], ctx: UserContext):
             con.close()
             st.dataframe(format_df(log), use_container_width=True, hide_index=True)
             st.caption("Immutable record of all business-critical actions.")
-            audit("VIEW", "GOV_AUDIT_LOG")
+            audit_once("gov_audit_log", "VIEW", "GOV_AUDIT_LOG")
 
     elif section == "Controlled Export":
         st.markdown("##### Export to Excel (controlled) — with watermark + audit logging")
