@@ -1804,20 +1804,62 @@ def inject_nav_css():
     st.markdown(
         """
         <style>
-        .topnav div[role="radiogroup"] { gap: 10px !important; }
-        .topnav div[role="radiogroup"] label {
+        /* ---------- TOP NAV: make st.radio look like pill tabs ---------- */
+
+        /* Put the radio options in a single row (scroll if needed) */
+        .topnav div[role="radiogroup"]{
+            display:flex !important;
+            flex-wrap:nowrap !important;
+            gap:10px !important;
+            align-items:center !important;
+            overflow-x:auto !important;
+            padding-bottom: 4px !important;
+        }
+
+        /* Hide scrollbar (WebKit) */
+        .topnav div[role="radiogroup"]::-webkit-scrollbar{ height: 6px; }
+        .topnav div[role="radiogroup"]::-webkit-scrollbar-thumb{ background: rgba(255,255,255,0.12); border-radius: 999px; }
+
+        /* Kill the radio bullet itself (works across multiple Streamlit DOM variants) */
+        .topnav input[type="radio"]{ display:none !important; }
+        .topnav svg{ display:none !important; } /* last resort: hides the circle icon if rendered as svg */
+
+        /* Make each option a pill */
+        .topnav div[role="radiogroup"] > label{
             border: 1px solid rgba(255,255,255,0.18) !important;
-            border-radius: 12px !important;
-            padding: 6px 10px !important;
-            background: rgba(255,255,255,0.02) !important;
+            border-radius: 999px !important;
+            padding: 8px 12px !important;
+            background: rgba(255,255,255,0.03) !important;
+            margin: 0 !important;
+            cursor: pointer !important;
+            white-space: nowrap !important;
+            line-height: 1 !important;
+        }
+        .topnav div[role="radiogroup"] > label:hover{
+            background: rgba(255,255,255,0.07) !important;
+        }
+
+        /* Tighten the inner layout + text */
+        .topnav div[role="radiogroup"] > label *{
+            margin: 0 !important;
+        }
+        .topnav div[role="radiogroup"] > label p{
+            font-size: 0.95rem !important;
             white-space: nowrap !important;
         }
-        .topnav div[role="radiogroup"] label:hover { background: rgba(255,255,255,0.06) !important; }
-        .topnav div[role="radiogroup"] label > div:first-child { display: none !important; }
-        .topnav div[role="radiogroup"] p { margin: 0 !important; white-space: nowrap !important; }
+
+        /* Highlight the selected pill (two common DOM patterns) */
+        .topnav div[role="radiogroup"] > label:has(input:checked){
+            border-color: rgba(255,255,255,0.55) !important;
+            background: rgba(255,255,255,0.12) !important;
+        }
+        .topnav div[role="radiogroup"] > label input:checked + div{
+            /* fallback if :has isn't supported */
+            font-weight: 600 !important;
+        }
         </style>
         """,
-        unsafe_allow_html=True
+        unsafe_allow_html=True,
     )
 
 
