@@ -1241,20 +1241,9 @@ def module_financials(lake: Dict[str, pd.DataFrame], ctx: UserContext):
     section = st.radio("View", sections, index=default_idx, horizontal=True, label_visibility="collapsed")
     st.markdown("---")
 
-    # 1. P&L
-    if section == "P&L":
-        # compute view
-        try:
-            fx_val = float(fx)
-        except ValueError:
-            fx_val = 0.74
-        pl_view = compute_pl_view(gold_pl, ctx, level=level, fx_cadusd=fx_val)
-
     # level determines aggregation granularity
     group_cols = ["posting_month", "gl_name"]
-    if level == "Enterprise":
-        pass
-    elif level == "Brand":
+    if level == "Brand":
         group_cols = ["posting_month", "brand", "gl_name"]
     elif level == "Region":
         group_cols = ["posting_month", "brand", "region", "gl_name"]
@@ -1385,9 +1374,7 @@ def module_financials(lake: Dict[str, pd.DataFrame], ctx: UserContext):
         c1.metric("Items", f"{len(ic):,}")
         c2.metric("Matched rate", pct(matched))
         if "amount_usd" in ic.columns:
-            open_amt = float(ic.loc[ic["status"] == "OPEN", "amount_usd"].sum())
-        elif "amount" in ic.columns:
-            open_amt = float(ic.loc[ic["status"] == "OPEN", "amount"].sum())
+            open_amt = float(ic.loc[ic["status"] == "OPEN", "amount_usd"].sum()) if len(ic) else 0.0
         else:
             open_amt = 0.0
 
