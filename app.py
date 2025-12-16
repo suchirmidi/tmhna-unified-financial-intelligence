@@ -27,11 +27,16 @@ import streamlit as st
 
 
 def set_nav(page: str, **kwargs):
+    # Canonical route
     st.session_state["nav_page"] = page
-    st.session_state["__topnav_choice"] = page
-    st.session_state["_nav_sidebar"] = page
+
+    # Tell main_app to sync widget keys on the NEXT run (before widgets render)
+    st.session_state["__nav_pending"] = page
+
+    # Deep-link payload
     for k, v in kwargs.items():
         st.session_state[k] = v
+
     st.rerun()
 
 def format_df(df: pd.DataFrame) -> pd.DataFrame:
@@ -1994,7 +1999,14 @@ def main_app():
     if "nav_page" not in st.session_state:
         st.session_state["nav_page"] = "Landing"
 
-    # Force BOTH widget states to match canonical on every run
+    # ✅ Apply pending navigation sync BEFORE rendering radios
+    pending = st.session_state.pop("__nav_pending", None)
+    if pending:
+        st.session_state["nav_page"] = pending
+        st.session_state["__topnav_choice"] = pending
+        st.session_state["_nav_sidebar"] = pending
+
+    # If no pending, keep widgets aligned with canonical (safe because widgets not created yet)
     st.session_state["__topnav_choice"] = st.session_state["nav_page"]
     st.session_state["_nav_sidebar"] = st.session_state["nav_page"]
 
