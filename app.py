@@ -1763,10 +1763,9 @@ def module_macro(lake: Dict[str, pd.DataFrame], ctx: UserContext):
         perms = ROLE_PERMS.get(ctx.role, {})
         if perms.get("can_export", False):
             # Mock Excel export
-            output = io.BytesIO()
-            with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-                inputs.to_excel(writer, sheet_name="Input_Costs")
-            st.download_button("Export Cost Data", data=output.getvalue(), file_name="input_costs.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", on_click=lambda: audit("EXPORT", "EXCEL", "MACRO_INPUTS"), type="primary")
+            # Watermarked Excel export
+            data_bytes = add_excel_watermark(inputs, ctx.actor, ctx.role, note="Macro/Input Costs export (PoC)")
+            st.download_button("Export Cost Data", data=data_bytes, file_name="input_costs.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", on_click=lambda: audit("EXPORT", "EXCEL", "MACRO_INPUTS"), type="primary")
 
     with ic2:
         st.markdown("##### Input Cost Watchlist")
