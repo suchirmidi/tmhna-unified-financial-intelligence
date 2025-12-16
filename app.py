@@ -804,7 +804,9 @@ def parse_nl_query(q: str) -> Dict[str, str]:
     # Brand
     if "raymond" in ql:
         out["brand"] = "Raymond"
-    elif "tmh" in ql or "tmhna" in ql:
+    elif "tmhna" in ql:
+        out["brand"] = "TMHNA (Consolidated)"
+    elif "tmh" in ql:
         out["brand"] = "TMH"
 
     # Plant (simple contains)
@@ -1070,7 +1072,8 @@ def sidebar_identity() -> UserContext:
          plants_in_region = [p for _, p in PLANTS]
     
     # Add "All Plants" option
-    if brand == "TMHNA (Consolidated)" and role in ["Executive", "Auditor"]:
+    # Always allow "All Plants"
+    if "All Plants" not in plants_in_region:
         plants_in_region.insert(0, "All Plants")
 
     # Default plant logic
@@ -1227,7 +1230,8 @@ def module_financials(lake: Dict[str, pd.DataFrame], ctx: UserContext):
     with top[0]:
         level = st.selectbox("View level", ["Enterprise", "Brand", "Region", "Plant"], index=0)
     with top[1]:
-        show_sim = st.toggle("Include simulated journals (what-if)", value=True, help="Controller-only feature in real life; shown for demo.")
+        perms = ROLE_PERMS.get(ctx.role, {})
+        show_sim = st.toggle("Include simulated journals (what-if)", value=True, disabled=not perms.get("can_journal", False), help="Controller-only feature in real life.")
     with top[2]:
         fx = st.text_input("CAD→USD FX rate (mock)", value="0.74")
 
@@ -1369,12 +1373,15 @@ def module_financials(lake: Dict[str, pd.DataFrame], ctx: UserContext):
                 ic = ic[ic["region"] == ctx.region]
             else:
                 ic = ic[ic["region"] == ctx.region]
-        matched = (ic["status"] == "MATCHED").mean() if len(ic) else 0.0
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Items", f"{len(ic):,}")
-        c2.metric("Matched rate", pct(matched))
         if "amount_usd" in ic.columns:
-            open_amt = float(ic.loc[ic["status"] == "OPEN", "amount_usd"].sum()) if len(ic) else 0.0
+            amt_col = "amount_usd"
+        elif "amount" in ic.columns:
+            amt_col = "amount"
+        else:
+            amt_col = None
+
+        if amt_col:
+            open_amt = float(ic.loc[ic["status"] == "OPEN", amt_col].sum()) if len(ic) else 0.0
         else:
             open_amt = 0.0
 
