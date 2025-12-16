@@ -146,7 +146,16 @@ def get_db_connection() -> sqlite3.Connection:
 
 
 def db() -> sqlite3.Connection:
-    return get_db_connection()
+    con = get_db_connection()
+    try:
+        con.execute("SELECT 1;")
+        return con
+    except sqlite3.ProgrammingError:
+        # cached connection got closed somehow — rebuild it
+        get_db_connection.clear()
+        con = get_db_connection()
+        con.execute("PRAGMA journal_mode=WAL;")
+        return con
 
 
 def init_db() -> None:
@@ -227,7 +236,6 @@ def init_db() -> None:
         """
     )
     con.commit()
-    con.commit()
 
 
 def audit(action: str, object_type: str, object_id: Optional[str] = None, details: Optional[dict] = None) -> None:
@@ -244,7 +252,6 @@ def audit(action: str, object_type: str, object_id: Optional[str] = None, detail
             json.dumps(details or {}, ensure_ascii=False),
         ),
     )
-    con.commit()
     con.commit()
 
 
@@ -285,7 +292,8 @@ def seed_stewardship_if_empty() -> None:
                 (dt.datetime.now().isoformat(timespec="seconds"), "PENDING", et, pk, pv, float(conf), rat),
             )
         con.commit()
-    con.close()
+        con.commit()
+    # DO NOT close: cached connection
 
 
 # -----------------------------
