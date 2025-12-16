@@ -26,14 +26,15 @@ import plotly.graph_objects as go
 import streamlit as st
 
 
-def goto(page: str, **kwargs):
+def set_nav(page: str, **kwargs):
     """
-    Updates the current page and any optional deep-link state (e.g., active section).
-    Using 'nav_page' as the canonical state key.
+    Updates nav_page (canonical) and syncs widgets (nav_sidebar).
     """
     st.session_state["nav_page"] = page
     for k, v in kwargs.items():
         st.session_state[k] = v
+    # Force widget sync
+    st.session_state["nav_sidebar"] = page
     st.rerun()
 
 def format_df(df: pd.DataFrame) -> pd.DataFrame:
@@ -1028,28 +1029,28 @@ def persona_landing(ctx: UserContext):
             st.markdown("**Executive Overview**")
             st.caption("Consolidated P&L & Key Metrics")
             if st.button("Go to Financials", key="ql_fin", use_container_width=True):
-                goto("Financials", active_section_financials="P&L")
+                set_nav("Financials", active_section_financials="P&L")
     
     with c2:
         with st.container(border=True):
             st.markdown("**Cash & Liquidity**")
             st.caption("Daily Cash Position & Sankey")
             if st.button("View Cash", key="ql_cash", use_container_width=True):
-                goto("Financials", active_section_financials="Cash & Liquidity")
+                set_nav("Financials", active_section_financials="Cash & Liquidity")
 
     with c3:
         with st.container(border=True):
             st.markdown("**Dealer Profitability**")
             st.caption("Margin, Service, Warranty Heatmap")
             if st.button("View Dealers", key="ql_dealers", use_container_width=True):
-                goto("Operations", active_section_operations="Dealer Profitability")
+                set_nav("Operations", active_section_operations="Dealer Profitability")
 
     with c4:
         with st.container(border=True):
             st.markdown("**Audit Log**")
             st.caption("Governance Trail & History")
             if st.button("View Audit Log", key="ql_audit", use_container_width=True):
-                goto("Governance", active_section_governance="Audit Trail")
+                set_nav("Governance", active_section_governance="Audit Trail")
 
     st.markdown("") # Spacer
 
@@ -1060,28 +1061,28 @@ def persona_landing(ctx: UserContext):
             st.markdown("**Inventory Valuation**")
             st.caption("Plant-level Stock Value")
             if st.button("View Inventory", key="ql_inv", use_container_width=True):
-                goto("Operations", active_section_operations="Inventory Valuation")
+                set_nav("Operations", active_section_operations="Inventory Valuation")
     
     with c6:
         with st.container(border=True):
             st.markdown("**Intercompany**")
             st.caption("Reconciliation status & breaks")
             if st.button("View Intercompany", key="ql_ic", use_container_width=True):
-                goto("Financials", active_section_financials="Intercompany")
+                set_nav("Financials", active_section_financials="Intercompany")
                 
     with c7:
         with st.container(border=True):
             st.markdown("**Ask Finance (NLP)**")
             st.caption("Natural Language Query")
             if st.button("Ask Question", key="ql_nlp", use_container_width=True):
-                goto("NLP Query")
+                set_nav("NLP Query")
 
     with c8:
         with st.container(border=True):
             st.markdown("**Simulate Journal**")
             st.caption("Write-back Workflow")
             if st.button("Create Journal", key="ql_journal", use_container_width=True):
-                goto("Workflows", active_section_workflows="Journal Entry Simulation")
+                set_nav("Workflows", active_section_workflows="Journal Entry Simulation")
 
     st.markdown("---")
 
@@ -1826,21 +1827,41 @@ def main_app():
     # Sidebar identity
     ctx = sidebar_identity()
     
+# -----------------------------
+# Main
+# -----------------------------
+def main_app():
+    init_db()
+    lake = make_mock_lakehouse()
+
+    # Sidebar identity
+    ctx = sidebar_identity()
+    
     # Inject Theme
     inject_theme(ctx.brand)
     inject_nav_css()
 
     # -----------------------------
-    # Canonical Navigation State
+    # Canonical Navigation State & Logic
     # -----------------------------
-    if "nav_page" not in st.session_state:
-        st.session_state["nav_page"] = "Landing"
-
     PAGES = ["Landing", "Financials", "Operations", "AI Insights", "Workflows", "Governance", "NLP Query"]
 
-    # Callbacks to sync widget state -> canonical state
-    def sync_from_side():
-        st.session_state["nav_page"] = st.session_state["nav_side"]
+    # 1. Initialize Canonical State
+    if "nav_page" not in st.session_state:
+        st.session_state["nav_page"] = "Landing"
+    
+    # 2. Initialize Widget State
+    if "nav_sidebar" not in st.session_state:
+        st.session_state["nav_sidebar"] = st.session_state["nav_page"]
+
+    # 3. Hard-Sync: Enforce widget alignment with canonical state on every run
+    if st.session_state["nav_sidebar"] != st.session_state["nav_page"]:
+        st.session_state["nav_sidebar"] = st.session_state["nav_page"]
+
+    # Callback: Sidebar -> Canonical
+    # This runs BEFORE the script rerun if sidebar was clicked.
+    def sync_side_callback():
+        st.session_state["nav_page"] = st.session_state["nav_sidebar"]
 
     # -----------------------------
     # Top Navigation (Primary)
@@ -1864,7 +1885,7 @@ def main_app():
                 
                 with nav_cols[i]:
                     if st.button(label, key=f"nav_btn_{page}", use_container_width=True):
-                         goto(page)
+                         set_nav(page)
 
         with t3:
             # User & Logout logic
@@ -1893,13 +1914,17 @@ def main_app():
     except ValueError:
         side_idx = 0
 
-    st.sidebar.radio(
+    choice = st.sidebar.radio(
         "Go to",
         PAGES,
         index=side_idx,
-        key="nav_side",
-        on_change=sync_from_side
+        key="nav_sidebar",
+        on_change=sync_side_callback
     )
+    
+    # Redundant safety: if callback didn't catch it or logic drifted
+    if choice != st.session_state["nav_page"]:
+        set_nav(choice)
 
     st.sidebar.markdown("---")
     st.sidebar.caption("PoC note: All data is mock. This app demonstrates the *shape* of the solution, not production integrations.")
