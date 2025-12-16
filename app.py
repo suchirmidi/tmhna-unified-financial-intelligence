@@ -227,7 +227,7 @@ def init_db() -> None:
         """
     )
     con.commit()
-    con.close()
+    con.commit()
 
 
 def audit(action: str, object_type: str, object_id: Optional[str] = None, details: Optional[dict] = None) -> None:
@@ -245,7 +245,7 @@ def audit(action: str, object_type: str, object_id: Optional[str] = None, detail
         ),
     )
     con.commit()
-    con.close()
+    con.commit()
 
 
 def audit_once(key: str, action: str, object_type: str, object_id: Optional[str] = None, details: Optional[dict] = None) -> None:
@@ -898,7 +898,6 @@ def add_simulated_journal_to_pl(pl_df: pd.DataFrame, ctx: UserContext, group_col
         "SELECT brand, region, plant, account, amount, memo FROM simulated_journals WHERE posted=0",
         con,
     )
-    con.close()
     if j.empty:
         return pl_df
 
@@ -1567,7 +1566,6 @@ def module_workflows(lake: Dict[str, pd.DataFrame], ctx: UserContext):
         else:
             con = db()
             unposted = pd.read_sql_query("SELECT * FROM simulated_journals WHERE posted=0 ORDER BY ts DESC", con)
-            con.close()
 
             c1, c2 = st.columns([1.0, 1.0])
             with c1:
@@ -1599,7 +1597,6 @@ def module_workflows(lake: Dict[str, pd.DataFrame], ctx: UserContext):
                     ),
                 )
                 con.commit()
-                con.close()
                 audit("WRITE", "SIMULATED_JOURNAL", details={"account": acct, "amount": float(amount), "posted": bool(posted)})
                 st.success("Saved. Toggle 'Include simulated journals' in Financials → P&L to see impact.")
                 st.rerun()
@@ -1615,7 +1612,6 @@ def module_workflows(lake: Dict[str, pd.DataFrame], ctx: UserContext):
             seed_stewardship_if_empty()
             con = db()
             q = pd.read_sql_query("SELECT * FROM stewardship_queue WHERE status='PENDING' ORDER BY confidence DESC, ts ASC", con)
-            con.close()
 
             if q.empty:
                 st.success("No pending items.")
@@ -1635,7 +1631,6 @@ def module_workflows(lake: Dict[str, pd.DataFrame], ctx: UserContext):
                                 (ctx.actor, dt.datetime.now().isoformat(timespec="seconds"), int(item["id"])),
                             )
                             con.commit()
-                            con.close()
                             audit("APPROVE", "STEWARDSHIP_ITEM", object_id=str(item["id"]), details={"proposed_key": item["proposed_key"]})
                             st.rerun()
                     with b2:
@@ -1646,7 +1641,6 @@ def module_workflows(lake: Dict[str, pd.DataFrame], ctx: UserContext):
                                 (ctx.actor, dt.datetime.now().isoformat(timespec="seconds"), int(item["id"])),
                             )
                             con.commit()
-                            con.close()
                             audit("REJECT", "STEWARDSHIP_ITEM", object_id=str(item["id"]), details={"proposed_key": item["proposed_key"]})
                             st.rerun()
                     with b3:
@@ -1670,14 +1664,12 @@ def module_workflows(lake: Dict[str, pd.DataFrame], ctx: UserContext):
                     (dt.datetime.now().isoformat(timespec="seconds"), ctx.actor, ctx.role, scope, key, comment),
                 )
                 con.commit()
-                con.close()
                 audit("WRITE", "ANNOTATION", details={"scope": scope, "key": key})
                 st.success("Saved annotation.")
                 st.rerun()
 
             con = db()
             ann = pd.read_sql_query("SELECT * FROM annotations ORDER BY ts DESC LIMIT 200", con)
-            con.close()
             # simple filter for context
             if ctx.role not in ["Executive", "Auditor"]:
                 ann = ann[ann["actor"] == ctx.actor]
@@ -1734,7 +1726,6 @@ def module_governance(lake: Dict[str, pd.DataFrame], ctx: UserContext):
         else:
             con = db()
             log = pd.read_sql_query("SELECT * FROM audit_log ORDER BY ts DESC LIMIT 500", con)
-            con.close()
             st.dataframe(format_df(log), use_container_width=True, hide_index=True)
             st.caption("Immutable record of all business-critical actions.")
             audit_once("gov_audit_log", "VIEW", "GOV_AUDIT_LOG")
@@ -1783,14 +1774,12 @@ def module_governance(lake: Dict[str, pd.DataFrame], ctx: UserContext):
                 ),
             )
             con.commit()
-            con.close()
             audit("WRITE", "ALERT", details={"metric": metric, "comparator": comparator, "threshold": float(threshold), "scope": scope, "scope_key": scope_key})
             st.success("Saved alert (simulation).")
             st.rerun()
 
         con = db()
         alerts = pd.read_sql_query("SELECT * FROM alerts ORDER BY ts DESC LIMIT 200", con)
-        con.close()
         if ctx.role not in ["Executive", "Auditor"]:
             alerts = alerts[alerts["actor"] == ctx.actor]
         st.dataframe(alerts, use_container_width=True, hide_index=True)
