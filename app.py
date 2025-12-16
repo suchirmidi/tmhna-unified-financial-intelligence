@@ -1786,47 +1786,24 @@ def inject_nav_css():
     st.markdown(
         """
         <style>
-        /* Make the horizontal radio look like a pill nav */
-        div[role="radiogroup"] {
-            gap: 10px !important;
-        }
-        div[role="radiogroup"] label {
+        .topnav div[role="radiogroup"] { gap: 10px !important; }
+        .topnav div[role="radiogroup"] label {
             border: 1px solid rgba(255,255,255,0.18) !important;
             border-radius: 12px !important;
             padding: 6px 10px !important;
             background: rgba(255,255,255,0.02) !important;
             white-space: nowrap !important;
         }
-        div[role="radiogroup"] label:hover {
-            background: rgba(255,255,255,0.06) !important;
-        }
-
-        /* Hide the default little radio circle */
-        div[role="radiogroup"] label > div:first-child {
-            display: none !important;
-        }
-
-        /* Keep labels from wrapping vertically */
-        div[role="radiogroup"] p {
-            margin: 0 !important;
-            white-space: nowrap !important;
-        }
+        .topnav div[role="radiogroup"] label:hover { background: rgba(255,255,255,0.06) !important; }
+        .topnav div[role="radiogroup"] label > div:first-child { display: none !important; }
+        .topnav div[role="radiogroup"] p { margin: 0 !important; white-space: nowrap !important; }
         </style>
         """,
         unsafe_allow_html=True
     )
 
 
-# -----------------------------
-# Main
-# -----------------------------
-def main_app():
-    init_db()
-    lake = make_mock_lakehouse()
 
-    # Sidebar identity
-    ctx = sidebar_identity()
-    
 # -----------------------------
 # Main
 # -----------------------------
@@ -1860,6 +1837,7 @@ def main_app():
 
         with mid:
             # Canonical top nav (this actually renders horizontally)
+            st.markdown('<div class="topnav">', unsafe_allow_html=True)
             nav_choice = st.radio(
                 "Primary navigation",
                 PAGES,
@@ -1868,6 +1846,7 @@ def main_app():
                 label_visibility="collapsed",
                 key="__topnav_choice",
             )
+            st.markdown("</div>", unsafe_allow_html=True)
             if nav_choice != st.session_state["nav_page"]:
                 set_nav(nav_choice)
 
@@ -1878,7 +1857,8 @@ def main_app():
                 st.write(f"**{ctx.actor}**")
             with c_logout:
                 if st.button("Log out", key="top_logout", type="primary"):
-                    st.session_state.clear()
+                    audit("LOGOUT", "AUTH", details={"username": st.session_state.get("actor")})
+                    st.session_state["authenticated"] = False
                     st.rerun()
 
     st.markdown("---")
