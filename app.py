@@ -1786,45 +1786,30 @@ def inject_nav_css():
     st.markdown(
         """
         <style>
-        /* Top nav wrapper: always one row + horizontal scroll on small widths */
-        .topnav {
-            display: flex;
-            flex-direction: row;
-            flex-wrap: nowrap;
-            gap: 10px;
-            overflow-x: auto;
-            overflow-y: hidden;
-            white-space: nowrap;
-            padding: 6px 2px 10px 2px;
-            -webkit-overflow-scrolling: touch;
+        /* Make the horizontal radio look like a pill nav */
+        div[role="radiogroup"] {
+            gap: 10px !important;
         }
-        .topnav::-webkit-scrollbar { height: 8px; }
-        .topnav::-webkit-scrollbar-thumb { border-radius: 8px; }
-
-        /* Make Streamlit buttons look like "text links" */
-        .topnav div.stButton > button {
-            background: transparent !important;
-            border: 1px solid rgba(255,255,255,0.15) !important;
-            padding: 8px 12px !important;
+        div[role="radiogroup"] label {
+            border: 1px solid rgba(255,255,255,0.18) !important;
             border-radius: 12px !important;
-            box-shadow: none !important;
+            padding: 6px 10px !important;
+            background: rgba(255,255,255,0.02) !important;
             white-space: nowrap !important;
         }
-        .topnav div.stButton > button:hover {
+        div[role="radiogroup"] label:hover {
             background: rgba(255,255,255,0.06) !important;
         }
 
-        /* Active page button style */
-        .topnav .nav-active div.stButton > button {
-            background: rgba(255, 77, 0, 0.25) !important;
-            border: 1px solid rgba(255, 77, 0, 0.65) !important;
+        /* Hide the default little radio circle */
+        div[role="radiogroup"] label > div:first-child {
+            display: none !important;
         }
 
-        /* Prevent inner label wrapping (avoids the vertical letter stacking) */
-        .topnav div.stButton > button p {
-            white-space: nowrap !important;
+        /* Keep labels from wrapping vertically */
+        div[role="radiogroup"] p {
             margin: 0 !important;
-            font-size: 0.95rem !important;
+            white-space: nowrap !important;
         }
         </style>
         """,
@@ -1874,16 +1859,17 @@ def main_app():
             st.markdown("#### TMHNA Intelligence")
 
         with mid:
-            st.markdown('<div class="topnav">', unsafe_allow_html=True)
-
-            for page in PAGES:
-                cls_open = '<div class="nav-active">' if page == st.session_state["nav_page"] else "<div>"
-                st.markdown(cls_open, unsafe_allow_html=True)
-                if st.button(page, key=f"topnav_{page}"):
-                    set_nav(page)
-                st.markdown("</div>", unsafe_allow_html=True)
-
-            st.markdown("</div>", unsafe_allow_html=True)
+            # Canonical top nav (this actually renders horizontally)
+            nav_choice = st.radio(
+                "Primary navigation",
+                PAGES,
+                index=PAGES.index(st.session_state["nav_page"]),
+                horizontal=True,
+                label_visibility="collapsed",
+                key="__topnav_choice",
+            )
+            if nav_choice != st.session_state["nav_page"]:
+                set_nav(nav_choice)
 
         with right:
             c_user, c_logout = st.columns([1.5, 1.0])
