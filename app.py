@@ -59,17 +59,21 @@ def format_df(df: pd.DataFrame) -> pd.DataFrame:
                 coerced = pd.to_numeric(out[col], errors="coerce")
                 if coerced.notna().mean() >= 0.9:
                     out[col] = coerced
-            except Exception:
+            except:
                 pass
-
-        # Check if float (or now coerced to float/int)
-        if pd.api.types.is_numeric_dtype(out[col]):
-            # If column name suggests money
-            if any(x in col for x in ["USD", "Amount", "Profit", "Cost", "Price", "Revenue", "Cash", "Assets", "Liabilities", "Equity", "Debt", "AP", "AR", "Inventory"]):
-                out[col] = out[col].apply(lambda x: f"${x:,.2f}" if pd.notnull(x) and not str(x).startswith("$") else x)
-            # If column name suggests percentage
-            elif any(x in col for x in ["%", "Margin", "Rate", "Ratio"]):
-                out[col] = out[col].apply(lambda x: f"{x:.1%}" if pd.notnull(x) and not str(x).endswith("%") else x)
+                
+        # Format money
+        if out[col].dtype in ["float64", "float32", "int64"]:
+            if any(k in col for k in ["USD", "Amount", "Revenue", "Profit", "Cost", "Margin", "Equity", "Assets", "Liabilities"]):
+                try:
+                    out[col] = out[col].apply(lambda x: f"${x:,.2f}" if pd.notnull(x) else x)
+                except: 
+                    pass
+            elif "%" in col or "Rate" in col or "Ratio" in col:
+                try:
+                    out[col] = out[col].apply(lambda x: f"{x:.1%}" if pd.notnull(x) else x)
+                except:
+                    pass
             # General number
             else:
                  out[col] = out[col].apply(lambda x: f"{x:,.2f}" if pd.notnull(x) else "")
@@ -251,12 +255,12 @@ def audit(action: str, object_type: str, object_id: Optional[str] = None, detail
         "INSERT INTO audit_log(ts, actor, role, action, object_type, object_id, details) VALUES(?,?,?,?,?,?,?)",
         (
             dt.datetime.now().isoformat(timespec="seconds"),
-            st.session_state.get("actor", "Unknown"),
+            st.session_state.get("login_user", "Unknown"),
             st.session_state.get("role", "Unknown"),
             action,
             object_type,
             object_id,
-            json.dumps(details or {}, ensure_ascii=False),
+            json.dumps({**(details or {}), "view_as": st.session_state.get("actor", "Unknown")}, ensure_ascii=False),
         ),
     )
     con.commit()
@@ -298,7 +302,6 @@ def seed_stewardship_if_empty() -> None:
                    VALUES(?,?,?,?,?,?,?)""",
                 (dt.datetime.now().isoformat(timespec="seconds"), "PENDING", et, pk, pv, float(conf), rat),
             )
-        con.commit()
         con.commit()
     # DO NOT close: cached connection
 
@@ -718,7 +721,7 @@ def rls_filter(df: pd.DataFrame, ctx: UserContext) -> pd.DataFrame:
          # Filter by plant if selected and valid
         if ctx.plant == "All Plants":
             pass
-        elif ctx.plant in [p[1] for p in PLANTS]: 
+        elif ctx.plant != "All Plants" and "plant" in out.columns:
              out = out[out["plant"] == ctx.plant]
         
     return out
@@ -951,15 +954,21 @@ def anomaly_detection(gl_tx: pd.DataFrame, ctx: UserContext, z_thresh: float = 2
     Uses z-score on amounts by (cost_center, gl_name).
     """
     df = rls_filter(gl_tx, ctx)
-    df = mask_sensitive(df, ctx)
+    df = rls_filter(gl_tx, ctx)
     df["posting_month"] = pd.to_datetime(df["posting_month"])
-    # For anomaly scoring, use absolute magnitude
+    
+    # Compute before masking
     grp = df.groupby(["cost_center", "gl_name"])["amount"].agg(["mean", "std"]).reset_index()
     df = df.merge(grp, on=["cost_center", "gl_name"], how="left")
     df["z"] = (df["amount"] - df["mean"]) / (df["std"].replace(0, np.nan))
     df["z_abs"] = df["z"].abs()
+    
     out = df[df["z_abs"] >= z_thresh].copy()
     out = out.sort_values("z_abs", ascending=False).head(30)
+    
+    # Apply masking for display
+    out = mask_sensitive(out, ctx)
+    
     return out[["posting_month", "brand", "region", "plant", "gl_name", "amount", "cost_center", "vendor_raw", "doc_no", "memo", "z_abs"]]
 
 
@@ -1231,7 +1240,11 @@ def module_financials(lake: Dict[str, pd.DataFrame], ctx: UserContext):
         level = st.selectbox("View level", ["Enterprise", "Brand", "Region", "Plant"], index=0)
     with top[1]:
         perms = ROLE_PERMS.get(ctx.role, {})
-        show_sim = st.toggle("Include simulated journals (what-if)", value=True, disabled=not perms.get("can_journal", False), help="Controller-only feature in real life.")
+        can_journal = perms.get("can_journal", False)
+        # Force toggle off if not allowed, otherwise respect user value
+        show_sim = st.toggle("Include simulated journals (what-if)", value=can_journal, disabled=not can_journal, help="Controller-only feature in real life.")
+        if not can_journal:
+            show_sim = False
     with top[2]:
         fx = st.text_input("CAD→USD FX rate (mock)", value="0.74")
 
@@ -1385,7 +1398,7 @@ def module_financials(lake: Dict[str, pd.DataFrame], ctx: UserContext):
         else:
             open_amt = 0.0
 
-        c3.metric("Open $ (USD)", money(open_amt))
+        st.metric("Open $ (USD)", money(open_amt))
 
         st.dataframe(format_df(ic.head(25)), use_container_width=True, hide_index=True)
 
