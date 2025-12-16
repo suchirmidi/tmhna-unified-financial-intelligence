@@ -28,6 +28,8 @@ import streamlit as st
 
 def set_nav(page: str, **kwargs):
     st.session_state["nav_page"] = page
+    st.session_state["__topnav_choice"] = page
+    st.session_state["_nav_sidebar"] = page
     for k, v in kwargs.items():
         st.session_state[k] = v
     st.rerun()
@@ -1992,6 +1994,18 @@ def main_app():
     if "nav_page" not in st.session_state:
         st.session_state["nav_page"] = "Landing"
 
+    # Force BOTH widget states to match canonical on every run
+    st.session_state["__topnav_choice"] = st.session_state["nav_page"]
+    st.session_state["_nav_sidebar"] = st.session_state["nav_page"]
+
+    def _on_topnav_change():
+        st.session_state["nav_page"] = st.session_state["__topnav_choice"]
+        st.session_state["_nav_sidebar"] = st.session_state["nav_page"]
+
+    def _on_sidenav_change():
+        st.session_state["nav_page"] = st.session_state["_nav_sidebar"]
+        st.session_state["__topnav_choice"] = st.session_state["nav_page"]
+
     # -----------------------------
     # Top Navigation (Primary)
     # -----------------------------
@@ -2006,13 +2020,11 @@ def main_app():
             nav_choice = st.radio(
                 "Primary navigation",
                 PAGES,
-                index=PAGES.index(st.session_state["nav_page"]),
+                key="__topnav_choice",
                 horizontal=True,
                 label_visibility="collapsed",
-                key="__topnav_choice",
+                on_change=_on_topnav_change,
             )
-            if nav_choice != st.session_state["nav_page"]:
-                set_nav(nav_choice)
 
         with right:
             st.caption(f"Scope: {ctx.brand} • {ctx.region} • {ctx.plant}")
@@ -2032,23 +2044,12 @@ def main_app():
     st.sidebar.markdown("---")
     st.sidebar.markdown("### Navigation")
 
-    if "_nav_sidebar" not in st.session_state:
-        st.session_state["_nav_sidebar"] = st.session_state["nav_page"]
-
-    # Keep widget mirror aligned with canonical each run
-    if st.session_state["_nav_sidebar"] != st.session_state["nav_page"]:
-        st.session_state["_nav_sidebar"] = st.session_state["nav_page"]
-
-    def _sync_sidebar_to_nav():
-        st.session_state["nav_page"] = st.session_state["_nav_sidebar"]
-
     st.sidebar.radio(
         "Go to",
         PAGES,
-        index=PAGES.index(st.session_state["nav_page"]),
         key="_nav_sidebar",
-        on_change=_sync_sidebar_to_nav,
         label_visibility="collapsed",
+        on_change=_on_sidenav_change,
     )
 
     st.sidebar.markdown("---")
