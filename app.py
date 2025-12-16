@@ -27,14 +27,9 @@ import streamlit as st
 
 
 def set_nav(page: str, **kwargs):
-    """
-    Updates nav_page (canonical) and syncs widgets (nav_sidebar).
-    """
     st.session_state["nav_page"] = page
     for k, v in kwargs.items():
         st.session_state[k] = v
-    # Force widget sync
-    st.session_state["nav_sidebar"] = page
     st.rerun()
 
 def format_df(df: pd.DataFrame) -> pd.DataFrame:
@@ -1788,33 +1783,53 @@ def inject_theme(brand: str):
     )
 
 def inject_nav_css():
-    # Style for Top Navigation "Text Links"
-    # We use a custom class .nav-container to isolate these buttons
-    st.markdown("""
-    <style>
-    .nav-container button[kind="secondary"] {
-        background-color: transparent !important;
-        border: none !important;
-        color: inherit !important;
-        padding: 0.5rem 0.5rem !important;
-        margin: 0 !important;
-        transition: all 0.2s ease;
-        box-shadow: none !important;
-    }
-    .nav-container button[kind="secondary"]:hover {
-        background-color: rgba(128, 128, 128, 0.1) !important;
-        text-decoration: none !important;
-    }
-    .nav-container button[kind="secondary"]:focus {
-        box-shadow: none !important;
-        border: none !important;
-        outline: none !important;
-    }
-    .nav-container button[kind="secondary"] p {
-        font-size: 16px !important;
-    }
-    </style>
-    """, unsafe_allow_html=True)
+    st.markdown(
+        """
+        <style>
+        /* Top nav wrapper: always one row + horizontal scroll on small widths */
+        .topnav {
+            display: flex;
+            flex-direction: row;
+            flex-wrap: nowrap;
+            gap: 10px;
+            overflow-x: auto;
+            overflow-y: hidden;
+            white-space: nowrap;
+            padding: 6px 2px 10px 2px;
+            -webkit-overflow-scrolling: touch;
+        }
+        .topnav::-webkit-scrollbar { height: 8px; }
+        .topnav::-webkit-scrollbar-thumb { border-radius: 8px; }
+
+        /* Make Streamlit buttons look like "text links" */
+        .topnav div.stButton > button {
+            background: transparent !important;
+            border: 1px solid rgba(255,255,255,0.15) !important;
+            padding: 8px 12px !important;
+            border-radius: 12px !important;
+            box-shadow: none !important;
+            white-space: nowrap !important;
+        }
+        .topnav div.stButton > button:hover {
+            background: rgba(255,255,255,0.06) !important;
+        }
+
+        /* Active page button style */
+        .topnav .nav-active div.stButton > button {
+            background: rgba(255, 77, 0, 0.25) !important;
+            border: 1px solid rgba(255, 77, 0, 0.65) !important;
+        }
+
+        /* Prevent inner label wrapping (avoids the vertical letter stacking) */
+        .topnav div.stButton > button p {
+            white-space: nowrap !important;
+            margin: 0 !important;
+            font-size: 0.95rem !important;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
 
 
 # -----------------------------
@@ -1846,85 +1861,66 @@ def main_app():
     # -----------------------------
     PAGES = ["Landing", "Financials", "Operations", "AI Insights", "Workflows", "Governance", "NLP Query"]
 
-    # 1. Initialize Canonical State
     if "nav_page" not in st.session_state:
         st.session_state["nav_page"] = "Landing"
-    
-    # 2. Initialize Widget State
-    if "nav_sidebar" not in st.session_state:
-        st.session_state["nav_sidebar"] = st.session_state["nav_page"]
-
-    # 3. Hard-Sync: Enforce widget alignment with canonical state on every run
-    if st.session_state["nav_sidebar"] != st.session_state["nav_page"]:
-        st.session_state["nav_sidebar"] = st.session_state["nav_page"]
-
-    # Callback: Sidebar -> Canonical
-    # This runs BEFORE the script rerun if sidebar was clicked.
-    def sync_side_callback():
-        st.session_state["nav_page"] = st.session_state["nav_sidebar"]
 
     # -----------------------------
     # Top Navigation (Primary)
     # -----------------------------
-    # Wrap in custom class for styling the secondary buttons as text links
-    st.markdown('<div class="nav-container">', unsafe_allow_html=True)
     with st.container():
-        # Layout: [Title 2] [Nav Items 7] [User/Logout 2]
-        t1, t2, t3 = st.columns([1.5, 7.0, 1.5])
-        
-        with t1:
-            st.markdown("#### TMHNA Intelligence")
-        
-        with t2:
-            # Horizontal Text Links
-            nav_cols = st.columns(len(PAGES))
-            for i, page in enumerate(PAGES):
-                is_active = (page == st.session_state["nav_page"])
-                # Visual highlight: Bold if active
-                label = f"**{page}**" if is_active else page
-                
-                with nav_cols[i]:
-                    if st.button(label, key=f"nav_btn_{page}", use_container_width=True):
-                         set_nav(page)
+        left, mid, right = st.columns([1.6, 6.8, 1.6])
 
-        with t3:
-            # User & Logout logic
+        with left:
+            st.markdown("#### TMHNA Intelligence")
+
+        with mid:
+            st.markdown('<div class="topnav">', unsafe_allow_html=True)
+
+            for page in PAGES:
+                cls_open = '<div class="nav-active">' if page == st.session_state["nav_page"] else "<div>"
+                st.markdown(cls_open, unsafe_allow_html=True)
+                if st.button(page, key=f"topnav_{page}"):
+                    set_nav(page)
+                st.markdown("</div>", unsafe_allow_html=True)
+
+            st.markdown("</div>", unsafe_allow_html=True)
+
+        with right:
             c_user, c_logout = st.columns([1.5, 1.0])
             with c_user:
                 st.caption(f"{ctx.role}")
                 st.write(f"**{ctx.actor}**")
             with c_logout:
-                # Primary Style avoids the .nav-container secondary button override
                 if st.button("Log out", key="top_logout", type="primary"):
                     st.session_state.clear()
                     st.rerun()
 
-    st.markdown('</div>', unsafe_allow_html=True)
     st.markdown("---")
 
     # -----------------------------
-    # Sidebar Navigation (Syncs with Top)
+    # Sidebar Navigation
     # -----------------------------
     st.sidebar.markdown("---")
     st.sidebar.markdown("### Navigation")
-    
-    # Sync visual state of sidebar to match canonical page
-    try:
-        side_idx = PAGES.index(st.session_state["nav_page"])
-    except ValueError:
-        side_idx = 0
 
-    choice = st.sidebar.radio(
+    if "_nav_sidebar" not in st.session_state:
+        st.session_state["_nav_sidebar"] = st.session_state["nav_page"]
+
+    # Keep widget mirror aligned with canonical each run
+    if st.session_state["_nav_sidebar"] != st.session_state["nav_page"]:
+        st.session_state["_nav_sidebar"] = st.session_state["nav_page"]
+
+    def _sync_sidebar_to_nav():
+        st.session_state["nav_page"] = st.session_state["_nav_sidebar"]
+
+    st.sidebar.radio(
         "Go to",
         PAGES,
-        index=side_idx,
-        key="nav_sidebar",
-        on_change=sync_side_callback
+        index=PAGES.index(st.session_state["nav_page"]),
+        key="_nav_sidebar",
+        on_change=_sync_sidebar_to_nav,
+        label_visibility="collapsed",
     )
-    
-    # Redundant safety: if callback didn't catch it or logic drifted
-    if choice != st.session_state["nav_page"]:
-        set_nav(choice)
 
     st.sidebar.markdown("---")
     st.sidebar.caption("PoC note: All data is mock. This app demonstrates the *shape* of the solution, not production integrations.")
