@@ -1804,28 +1804,26 @@ def inject_nav_css():
     st.markdown(
         """
         <style>
-        /* ---------- TOP NAV: make st.radio look like pill tabs ---------- */
-
-        /* Put the radio options in a single row (scroll if needed) */
-        .topnav div[role="radiogroup"]{
+        /* Target ONLY the top nav radio (not sidebar, not other radios) */
+        div:not([data-testid="stSidebar"]) div[role="radiogroup"][aria-label="Primary navigation"]{
             display:flex !important;
             flex-wrap:nowrap !important;
             gap:10px !important;
             align-items:center !important;
             overflow-x:auto !important;
-            padding-bottom: 4px !important;
+            padding: 2px 0 6px 0 !important;
         }
 
-        /* Hide scrollbar (WebKit) */
-        .topnav div[role="radiogroup"]::-webkit-scrollbar{ height: 6px; }
-        .topnav div[role="radiogroup"]::-webkit-scrollbar-thumb{ background: rgba(255,255,255,0.12); border-radius: 999px; }
-
-        /* Kill the radio bullet itself (works across multiple Streamlit DOM variants) */
-        .topnav input[type="radio"]{ display:none !important; }
-        .topnav svg{ display:none !important; } /* last resort: hides the circle icon if rendered as svg */
+        /* Hide radio circles/icons */
+        div:not([data-testid="stSidebar"]) div[role="radiogroup"][aria-label="Primary navigation"] input[type="radio"]{
+            display:none !important;
+        }
+        div:not([data-testid="stSidebar"]) div[role="radiogroup"][aria-label="Primary navigation"] svg{
+            display:none !important;
+        }
 
         /* Make each option a pill */
-        .topnav div[role="radiogroup"] > label{
+        div:not([data-testid="stSidebar"]) div[role="radiogroup"][aria-label="Primary navigation"] > label{
             border: 1px solid rgba(255,255,255,0.18) !important;
             border-radius: 999px !important;
             padding: 8px 12px !important;
@@ -1835,27 +1833,21 @@ def inject_nav_css():
             white-space: nowrap !important;
             line-height: 1 !important;
         }
-        .topnav div[role="radiogroup"] > label:hover{
+        div:not([data-testid="stSidebar"]) div[role="radiogroup"][aria-label="Primary navigation"] > label:hover{
             background: rgba(255,255,255,0.07) !important;
         }
 
-        /* Tighten the inner layout + text */
-        .topnav div[role="radiogroup"] > label *{
+        /* Tighten text */
+        div:not([data-testid="stSidebar"]) div[role="radiogroup"][aria-label="Primary navigation"] > label p{
             margin: 0 !important;
-        }
-        .topnav div[role="radiogroup"] > label p{
             font-size: 0.95rem !important;
             white-space: nowrap !important;
         }
 
-        /* Highlight the selected pill (two common DOM patterns) */
-        .topnav div[role="radiogroup"] > label:has(input:checked){
+        /* Selected pill highlight */
+        div:not([data-testid="stSidebar"]) div[role="radiogroup"][aria-label="Primary navigation"] > label:has(input:checked){
             border-color: rgba(255,255,255,0.55) !important;
             background: rgba(255,255,255,0.12) !important;
-        }
-        .topnav div[role="radiogroup"] > label input:checked + div{
-            /* fallback if :has isn't supported */
-            font-weight: 600 !important;
         }
         </style>
         """,
@@ -1897,7 +1889,6 @@ def main_app():
 
         with mid:
             # Canonical top nav (this actually renders horizontally)
-            st.markdown('<div class="topnav">', unsafe_allow_html=True)
             nav_choice = st.radio(
                 "Primary navigation",
                 PAGES,
@@ -1906,7 +1897,6 @@ def main_app():
                 label_visibility="collapsed",
                 key="__topnav_choice",
             )
-            st.markdown("</div>", unsafe_allow_html=True)
             if nav_choice != st.session_state["nav_page"]:
                 set_nav(nav_choice)
 
