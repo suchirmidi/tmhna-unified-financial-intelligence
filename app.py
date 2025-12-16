@@ -104,6 +104,13 @@ def login_screen():
         st.warning("⚠️ No secrets found. Using default `demo` / `demo`.")
 
 
+def do_logout():
+    audit("LOGOUT", "AUTH", details={"username": st.session_state.get("actor")})
+    st.session_state["authenticated"] = False
+    st.session_state["login_user"] = None
+    st.rerun()
+
+
 
 # -----------------------------
 # Page config
@@ -807,10 +814,14 @@ def add_excel_watermark(df: pd.DataFrame, actor: str, role: str, note: str) -> b
 # -----------------------------
 # Business logic: financial statements (P&L, BS, Cash)
 # -----------------------------
-def compute_pl_view(gold_pl: pd.DataFrame, ctx: UserContext, level: str) -> pd.DataFrame:
+def compute_pl_view(gold_pl: pd.DataFrame, ctx: UserContext, level: str, fx_cadusd: float = 0.74) -> pd.DataFrame:
     df = gold_pl.copy()
-    # apply RLS then additional "level" selections
     df = rls_filter(df, ctx)
+
+    # Recompute amount_usd using current FX (only Canada rows)
+    if "amount_local" in df.columns:
+        df["amount_usd"] = df["amount_local"]
+        df.loc[df["region"] == "Canada", "amount_usd"] = df.loc[df["region"] == "Canada", "amount_local"] * fx_cadusd
 
     # level determines aggregation granularity
     group_cols = ["posting_month", "gl_name"]
@@ -937,10 +948,7 @@ def sidebar_identity() -> UserContext:
     
     # 1. Logout
     if st.sidebar.button("Sign Out"):
-        st.session_state["authenticated"] = False
-        st.session_state["login_user"] = None
-        audit("LOGOUT", "AUTH", details={"username": st.session_state.get("actor")})
-        st.rerun()
+        do_logout()
 
     actor = st.sidebar.selectbox("Signed in as", [u[0] for u in USERS], index=0)
     # resolve defaults
@@ -960,8 +968,14 @@ def sidebar_identity() -> UserContext:
     # We essentially let the user pick from 'available_brands'.
     
     # Default selection logic
+    default_brand = u[2]
+    if role in ["Executive", "Auditor"]:
+        default_brand = "TMHNA (Consolidated)"
+
     default_brand_idx = 0
-    if u[2] in available_brands:
+    if default_brand in available_brands:
+        default_brand_idx = available_brands.index(default_brand)
+    elif u[2] in available_brands:
         default_brand_idx = available_brands.index(u[2])
         
     brand = st.sidebar.selectbox("Brand", available_brands, index=default_brand_idx)
@@ -1119,7 +1133,11 @@ def module_financials(lake: Dict[str, pd.DataFrame], ctx: UserContext):
     # 1. P&L
     if section == "P&L":
         # compute view
-        pl_view = compute_pl_view(gold_pl, ctx, level=level)
+        try:
+            fx_val = float(fx)
+        except ValueError:
+            fx_val = 0.74
+        pl_view = compute_pl_view(gold_pl, ctx, level=level, fx_cadusd=fx_val)
 
         # overlay simulated journals
         if show_sim:
@@ -1851,15 +1869,14 @@ def main_app():
                 set_nav(nav_choice)
 
         with right:
+            st.caption(f"Scope: {ctx.brand} • {ctx.region} • {ctx.plant}")
             c_user, c_logout = st.columns([1.5, 1.0])
             with c_user:
                 st.caption(f"{ctx.role}")
                 st.write(f"**{ctx.actor}**")
             with c_logout:
                 if st.button("Log out", key="top_logout", type="primary"):
-                    audit("LOGOUT", "AUTH", details={"username": st.session_state.get("actor")})
-                    st.session_state["authenticated"] = False
-                    st.rerun()
+                    do_logout()
 
     st.markdown("---")
 
